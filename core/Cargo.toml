@@ -1,0 +1,27 @@
+[package]
+name = "core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+ignore = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+tantivy = { workspace = true }
+tokio = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-python = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-cpp = "0.23"
+sha2 = "0.10"
+hex = "0.4"
+regex = "1.10"
+bincode = { workspace = true }
+lance = { workspace = true }
+arrow = { workspace = true }
+fastembed = { workspace = true }
+futures = { workspace = true }
