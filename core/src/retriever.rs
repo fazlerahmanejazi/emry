@@ -7,6 +7,8 @@ use anyhow::Result;
 use crate::ranking::features::FeatureExtractor;
 use crate::ranking::model::Ranker;
 use crate::structure::index::SymbolIndex;
+use crate::structure::graph::{CodeGraph, NodeId};
+use crate::paths::{Path, builder::{PathBuilder, PathBuilderConfig}};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -15,6 +17,7 @@ pub struct Retriever {
     vector_index: Arc<VectorIndex>,
     embedder: Arc<dyn Embedder + Send + Sync>,
     symbol_index: Option<Arc<SymbolIndex>>,
+    graph: Option<Arc<CodeGraph>>,
     ranker: Option<Box<dyn Ranker + Send + Sync>>,
     config: Config,
 }
@@ -25,6 +28,7 @@ impl Retriever {
         vector_index: Arc<VectorIndex>,
         embedder: Arc<dyn Embedder + Send + Sync>,
         symbol_index: Option<Arc<SymbolIndex>>,
+        graph: Option<Arc<CodeGraph>>,
         ranker: Option<Box<dyn Ranker + Send + Sync>>,
         config: Config,
     ) -> Self {
@@ -33,6 +37,7 @@ impl Retriever {
             vector_index,
             embedder,
             symbol_index,
+            graph,
             ranker,
             config,
         }
@@ -121,5 +126,56 @@ impl Retriever {
         candidates.truncate(top_k);
 
         Ok(candidates)
+    }
+
+    pub async fn search_paths(&self, query: &str, mode: SearchMode, top_k: usize) -> Result<(Vec<(f32, Chunk)>, Vec<Path>)> {
+        let chunks = self.search(query, mode, top_k).await?;
+        
+        let mut paths = Vec::new();
+        if let Some(graph) = &self.graph {
+            let builder = PathBuilder::new(graph);
+            let config = PathBuilderConfig::default(); // TODO: Allow config override
+
+            // Use top chunks as seeds
+            for (_, chunk) in &chunks {
+                // Naive mapping: Chunk -> File Node (since we don't have exact symbol ID in chunk yet)
+                // Or try to find symbol by name if chunk has metadata.
+                // For Phase 3, let's try to map file path to File Node.
+                // And if we have symbol index, try to find symbol.
+                
+                // Strategy 1: File Node
+                let file_id = NodeId(chunk.file_path.to_string_lossy().to_string());
+                if graph.nodes.contains_key(&file_id) {
+                    let mut new_paths = builder.find_paths(&file_id, &config);
+                    paths.append(&mut new_paths);
+                }
+
+                // Strategy 2: Symbol Node (if chunk name matches a symbol)
+                // This is heuristic.
+                if let Some(symbol_index) = &self.symbol_index {
+                     // If we can extract a likely symbol name from chunk...
+                     // Or just search symbol index with query and use those as seeds?
+                }
+            }
+
+            // Also use direct symbol hits from query as seeds
+            if let Some(symbol_index) = &self.symbol_index {
+                let symbols = symbol_index.search(query);
+                for symbol in symbols {
+                    let node_id = NodeId(symbol.id.clone());
+                    if graph.nodes.contains_key(&node_id) {
+                        let mut new_paths = builder.find_paths(&node_id, &config);
+                        paths.append(&mut new_paths);
+                    }
+                }
+            }
+        }
+        
+        // Deduplicate paths by ID
+        paths.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        paths.dedup_by(|a, b| a.id == b.id);
+        paths.truncate(10); // Cap total paths
+
+        Ok((chunks, paths))
     }
 }

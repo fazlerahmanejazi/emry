@@ -71,6 +71,10 @@ pub enum Commands {
         /// Search for a summary
         #[arg(long)]
         summary: bool,
+
+        /// Enable path retrieval
+        #[arg(long)]
+        paths: bool,
     },
     /// Show index status
     Status,
@@ -290,7 +294,7 @@ pub async fn handle_index(full: bool, summarize: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn handle_search(query: String, mode: Option<CliSearchMode>, top: usize, tui: bool, symbol: bool, summary: bool) -> Result<()> {
+pub async fn handle_search(query: String, mode: Option<CliSearchMode>, top: usize, tui: bool, symbol: bool, summary: bool, paths: bool) -> Result<()> {
     if tui {
         println!("TUI not implemented yet.");
         return Ok(());
@@ -366,24 +370,61 @@ pub async fn handle_search(query: String, mode: Option<CliSearchMode>, top: usiz
     // Initialize Ranker
     let ranker: Option<Box<dyn Ranker + Send + Sync>> = Some(Box::new(LinearRanker::default()));
 
+    // Load Graph if paths are requested or just generally available
+    // For Phase 3, we load it if available to support paths.
+    let graph = CodeGraph::load(&index_dir.join("graph.json")).ok().map(Arc::new);
+
     let retriever = Retriever::new(
         lexical_index,
         vector_index,
         embedder,
         symbol_index,
+        graph,
         ranker,
         search_config
     );
-    let results = retriever.search(&query, core_mode, top_k).await?;
 
-    println!("Found {} results:", results.len());
-    for (i, (score, chunk)) in results.iter().enumerate() {
-        println!("\nResult #{}: (Score: {:.4})", i + 1, score);
-        println!("File: {}:{}-{}", chunk.file_path.display(), chunk.start_line, chunk.end_line);
-        println!("Language: {:?}", chunk.language);
-        println!("--------------------------------------------------");
-        println!("{}", chunk.content.trim());
-        println!("--------------------------------------------------");
+    if paths {
+        let (chunks, path_results) = retriever.search_paths(&query, core_mode, top_k).await?;
+        
+        println!("Found {} chunks and {} paths:", chunks.len(), path_results.len());
+        
+        println!("\n--- Top Chunks ---");
+        for (i, (score, chunk)) in chunks.iter().enumerate() {
+            println!("\nResult #{}: (Score: {:.4})", i + 1, score);
+            println!("File: {}:{}-{}", chunk.file_path.display(), chunk.start_line, chunk.end_line);
+            println!("Language: {:?}", chunk.language);
+            println!("--------------------------------------------------");
+            println!("{}", chunk.content.trim());
+            println!("--------------------------------------------------");
+        }
+
+        println!("\n--- Top Paths ---");
+        for (i, path) in path_results.iter().enumerate() {
+            println!("\nPath #{}: (Score: {:.4})", i + 1, path.score);
+            for (j, node) in path.nodes.iter().enumerate() {
+                let edge_kind = if j > 0 {
+                    &path.edges[j-1].kind
+                } else {
+                    "START"
+                };
+                println!("  [{}] {} -> {} ({})", edge_kind, node.kind, node.name, node.file_path);
+            }
+        }
+
+    } else {
+        let results = retriever.search(&query, core_mode, top_k).await?;
+
+        println!("Found {} results:", results.len());
+
+        for (i, (score, chunk)) in results.iter().enumerate() {
+            println!("\nResult #{}: (Score: {:.4})", i + 1, score);
+            println!("File: {}:{}-{}", chunk.file_path.display(), chunk.start_line, chunk.end_line);
+            println!("Language: {:?}", chunk.language);
+            println!("--------------------------------------------------");
+            println!("{}", chunk.content.trim());
+            println!("--------------------------------------------------");
+        }
     }
 
     Ok(())

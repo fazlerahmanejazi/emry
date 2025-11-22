@@ -149,7 +149,7 @@ impl App {
                  }
              };
              
-             let retriever = Retriever::new(lexical_index, vector_index, embedder, None, None, config);
+             let retriever = Retriever::new(lexical_index, vector_index, embedder, None, None, None, config);
              self.retriever = Some(retriever);
         }
         

@@ -12,8 +12,8 @@ async fn main() -> Result<()> {
         Commands::Index { full, summarize } => {
             handle_index(full, summarize).await?;
         }
-        Commands::Search { query, mode, top, lang: _, path: _, tui, symbol, summary } => {
-            handle_search(query, mode, top, tui, symbol, summary).await?;
+        Commands::Search { query, mode, top, lang: _, path: _, tui, symbol, summary, paths } => {
+            handle_search(query, mode, top, tui, symbol, summary, paths).await?;
         }
         Commands::Status => {
             println!("Status command not implemented yet.");

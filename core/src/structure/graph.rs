@@ -22,6 +22,8 @@ pub struct GraphNode {
     pub kind: NodeType,
     pub label: String, // Name or path
     pub file_path: Option<PathBuf>,
+    pub start_line: usize,
+    pub end_line: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -79,12 +81,14 @@ impl CodeGraph {
         Ok(())
     }
 
-    pub fn add_node(&mut self, id: NodeId, kind: NodeType, label: String, file_path: Option<PathBuf>) {
+    pub fn add_node(&mut self, id: NodeId, kind: NodeType, label: String, file_path: Option<PathBuf>, start_line: usize, end_line: usize) {
         self.nodes.insert(id.clone(), GraphNode {
             id,
             kind,
             label,
             file_path,
+            start_line,
+            end_line,
         });
     }
 
@@ -125,6 +129,8 @@ impl GraphBuilder {
                 kind,
                 symbol.name.clone(),
                 Some(symbol.file_path.clone()),
+                symbol.start_line,
+                symbol.end_line,
             );
 
             // Add node for the file if it doesn't exist
@@ -135,6 +141,8 @@ impl GraphBuilder {
                     NodeType::File,
                     symbol.file_path.file_name().unwrap_or_default().to_string_lossy().to_string(),
                     Some(symbol.file_path.clone()),
+                    0,
+                    0,
                 );
             }
 

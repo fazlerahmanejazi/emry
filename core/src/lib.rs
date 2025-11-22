@@ -8,6 +8,7 @@ pub mod retriever;
 pub mod structure;
 pub mod summaries;
 pub mod ranking;
+pub mod paths;
 
 
 // pub mod index;    // To be implemented
