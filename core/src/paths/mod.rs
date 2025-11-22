@@ -1,12 +1,14 @@
 pub mod builder;
 pub mod scorer;
+pub mod selector;
 
 use serde::{Deserialize, Serialize};
+use crate::structure::graph::{NodeType, EdgeType};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathNode {
-    pub node_id: String, // Graph Node ID
-    pub kind: String,    // Function, Class, File, etc.
+    pub node_id: String,
+    pub kind: NodeType,
     pub name: String,
     pub file_path: String,
     pub start_line: usize,
@@ -17,7 +19,7 @@ pub struct PathNode {
 pub struct PathEdge {
     pub from_node: String,
     pub to_node: String,
-    pub kind: String, // Calls, DefinedIn, etc.
+    pub kind: EdgeType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,8 +32,8 @@ pub struct Path {
 
 impl Path {
     pub fn new(nodes: Vec<PathNode>, edges: Vec<PathEdge>) -> Self {
-        // Simple ID generation (hash or uuid would be better in prod)
-        let id = format!("path_{}", nodes.len()); 
+        // Simple ID generation
+        let id = format!("path_{}_{}", nodes.first().map(|n| n.node_id.as_str()).unwrap_or(""), nodes.len()); 
         Self {
             id,
             nodes,

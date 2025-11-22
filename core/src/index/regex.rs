@@ -1,5 +1,4 @@
 use crate::config::IndexConfig;
-use crate::models::Chunk;
 use anyhow::Result;
 use ignore::WalkBuilder;
 use regex::RegexBuilder;

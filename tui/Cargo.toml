@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
-core = { path = "../core" }
+coderet-core = { path = "../core" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 tokio = { workspace = true }

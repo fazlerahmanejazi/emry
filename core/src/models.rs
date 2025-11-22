@@ -22,6 +22,39 @@ impl Language {
             _ => Language::Unknown,
         }
     }
+
+    pub fn from_name(name: &str) -> Self {
+        match name.to_lowercase().as_str() {
+            "python" | "py" => Language::Python,
+            "java" => Language::Java,
+            "typescript" | "ts" | "tsx" => Language::TypeScript,
+            "javascript" | "js" | "jsx" => Language::JavaScript,
+            "cpp" | "c++" | "cc" | "cxx" | "hpp" | "hh" | "h" => Language::Cpp,
+            _ => Language::Unknown,
+        }
+    }
+}
+
+impl std::str::FromStr for Language {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Language::from_name(s))
+    }
+}
+
+impl std::fmt::Display for Language {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Language::Python => "python",
+            Language::Java => "java",
+            Language::TypeScript => "typescript",
+            Language::JavaScript => "javascript",
+            Language::Cpp => "cpp",
+            Language::Unknown => "unknown",
+        };
+        write!(f, "{}", name)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,4 +84,13 @@ pub struct FileMetadata {
 pub struct IndexMetadata {
     pub version: String,
     pub files: Vec<FileMetadata>,
+}
+
+impl Default for IndexMetadata {
+    fn default() -> Self {
+        Self {
+            version: "1".to_string(),
+            files: Vec::new(),
+        }
+    }
 }

@@ -8,7 +8,7 @@ use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
 };
-use std::{error::Error, io};
+use std::io;
 
 pub mod app;
 pub mod ui;
@@ -57,6 +57,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::R
                 KeyCode::Enter => app.on_enter().await,
                 KeyCode::Esc => app.on_esc(),
                 KeyCode::Backspace => app.on_backspace(),
+                KeyCode::Up => app.on_up(),
+                KeyCode::Down => app.on_down(),
                 KeyCode::Char(c) => app.on_char(c),
                 _ => {}
             }

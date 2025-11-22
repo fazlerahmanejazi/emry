@@ -1,9 +1,9 @@
 use crate::models::Chunk;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, doc};
+use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, Term};
 use tantivy::schema::*;
 use tantivy::TantivyDocument;
 
@@ -63,11 +63,26 @@ impl LexicalIndex {
                 self.path_field => chunk.file_path.to_string_lossy().as_ref(),
                 self.start_line_field => chunk.start_line as u64,
                 self.end_line_field => chunk.end_line as u64,
-                self.language_field => format!("{:?}", chunk.language),
+                self.language_field => chunk.language.to_string(),
             ))?;
         }
 
         writer.commit()?;
+        self.reader.reload()?;
+        Ok(())
+    }
+
+    pub fn delete_chunks(&mut self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut writer: IndexWriter = self.index.writer(10_000_000)?;
+        for id in ids {
+            let term = Term::from_field_text(self.id_field, id);
+            writer.delete_term(term);
+        }
+        writer.commit()?;
+        self.reader.reload()?;
         Ok(())
     }
 
@@ -91,14 +106,14 @@ impl LexicalIndex {
             let path_str = retrieved_doc.get_first(self.path_field).and_then(|v| v.as_str()).unwrap_or("");
             let start_line = retrieved_doc.get_first(self.start_line_field).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let end_line = retrieved_doc.get_first(self.end_line_field).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            let lang_str = retrieved_doc.get_first(self.language_field).and_then(|v| v.as_str()).unwrap_or("Unknown");
+            let lang_str = retrieved_doc.get_first(self.language_field).and_then(|v| v.as_str()).unwrap_or("unknown");
             
             // We don't store everything (like byte offsets or node type) in lexical index for now,
             // or we could add them to schema. For Phase 1, this is enough for search results.
             
             let chunk = Chunk {
                 id,
-                language: crate::models::Language::Unknown, // TODO: Parse lang_str back to enum
+                language: crate::models::Language::from_name(lang_str),
                 file_path: std::path::PathBuf::from(path_str),
                 start_line,
                 end_line,

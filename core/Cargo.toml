@@ -1,11 +1,11 @@
 [package]
-name = "core"
+name = "coderet-core"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["json", "blocking"] }
 serde_json = { workspace = true }
 ignore = { workspace = true }
 serde = { workspace = true }
@@ -23,5 +23,10 @@ regex = "1.10"
 bincode = { workspace = true }
 lance = { workspace = true }
 arrow = { workspace = true }
-fastembed = { workspace = true }
 futures = { workspace = true }
+globset = { workspace = true }
+tempfile = "3"
+once_cell = { workspace = true }
+petgraph = { workspace = true }
+rayon = { workspace = true }
+itertools = { workspace = true }

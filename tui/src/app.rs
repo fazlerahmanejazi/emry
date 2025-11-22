@@ -1,7 +1,8 @@
-use core::models::Chunk;
-use core::retriever::Retriever;
-use core::config::Config;
+use coderet_core::retriever::{Retriever, SearchResult};
+use coderet_core::config::Config;
 use std::sync::Arc;
+use std::process::Command;
+use std::path::PathBuf;
 
 pub enum InputMode {
     Normal,
@@ -11,7 +12,7 @@ pub enum InputMode {
 pub struct App {
     pub input: String,
     pub input_mode: InputMode,
-    pub results: Vec<(f32, Chunk)>,
+    pub results: Vec<SearchResult>,
     pub selected_result_index: Option<usize>,
     pub retriever: Option<Retriever>,
     pub status_message: String,
@@ -34,7 +35,7 @@ impl App {
         };
         
         // Try to init retriever
-        if let Ok(config) = Config::load() { // Assuming Config::load exists or we use default
+        if let Ok(_config) = Config::load() { // Assuming Config::load exists or we use default
              // We need to know where the index is. Config doesn't store index path directly usually, 
              // but we can assume default `.codeindex`.
              let index_dir = std::path::Path::new(".codeindex");
@@ -68,6 +69,8 @@ impl App {
                         self.input_mode = InputMode::Editing;
                         self.status_message = "Enter query...".to_string();
                     }
+                    'j' => self.select_next(),
+                    'k' => self.select_prev(),
                     _ => {}
                 }
             }
@@ -93,6 +96,36 @@ impl App {
         self.input_mode = InputMode::Normal;
         self.status_message = "Normal mode.".to_string();
     }
+
+    pub fn on_up(&mut self) {
+        if let InputMode::Normal = self.input_mode {
+            self.select_prev();
+        }
+    }
+
+    pub fn on_down(&mut self) {
+        if let InputMode::Normal = self.input_mode {
+            self.select_next();
+        }
+    }
+
+    fn select_next(&mut self) {
+        if self.results.is_empty() {
+            return;
+        }
+        let idx = self.selected_result_index.unwrap_or(0);
+        let next = (idx + 1).min(self.results.len().saturating_sub(1));
+        self.selected_result_index = Some(next);
+    }
+
+    fn select_prev(&mut self) {
+        if self.results.is_empty() {
+            return;
+        }
+        let idx = self.selected_result_index.unwrap_or(0);
+        let prev = idx.saturating_sub(1);
+        self.selected_result_index = Some(prev);
+    }
     
     pub async fn on_enter(&mut self) {
         if let InputMode::Editing = self.input_mode {
@@ -106,7 +139,8 @@ impl App {
     async fn perform_search(&mut self) {
         // Initialize retriever if needed
         if self.retriever.is_none() {
-             let index_dir = std::path::Path::new(".codeindex");
+             let branch = current_branch().unwrap_or_else(|| "default".to_string());
+             let index_dir = PathBuf::from(".codeindex").join("branches").join(branch);
              if !index_dir.exists() {
                  self.status_message = "Index not found. Run 'code-retriever index' first.".to_string();
                  return;
@@ -116,7 +150,7 @@ impl App {
              let config = Config::load().unwrap_or_default();
              
              // Initialize components
-             let lexical_index = match core::index::lexical::LexicalIndex::new(&index_dir.join("lexical")) {
+             let lexical_index = match coderet_core::index::lexical::LexicalIndex::new(&index_dir.join("lexical")) {
                  Ok(idx) => Arc::new(idx),
                  Err(e) => {
                      self.status_message = format!("Failed to load lexical index: {}", e);
@@ -124,7 +158,7 @@ impl App {
                  }
              };
              
-             let vector_index = match core::index::vector::VectorIndex::new(&index_dir.join("vector_store.bin")).await {
+             let vector_index = match coderet_core::index::vector::VectorIndex::new(&index_dir.join("vector.lance")).await {
                  Ok(idx) => Arc::new(idx),
                  Err(e) => {
                      self.status_message = format!("Failed to load vector index: {}", e);
@@ -132,7 +166,7 @@ impl App {
                  }
              };
              
-             let embedder: Arc<dyn core::embeddings::Embedder + Send + Sync> = match core::embeddings::external::ExternalEmbedder::new(None) {
+             let embedder: Arc<dyn coderet_core::embeddings::Embedder + Send + Sync> = match coderet_core::embeddings::external::ExternalEmbedder::new(None) {
                  Ok(e) => Arc::new(e),
                  Err(e) => {
                      // If external fails (no API key), we can't do semantic search.
@@ -162,14 +196,17 @@ impl App {
             
             // Map config mode to core mode
             let core_mode = match mode {
-                core::config::SearchMode::Lexical => core::config::SearchMode::Lexical,
-                core::config::SearchMode::Semantic => core::config::SearchMode::Semantic,
-                core::config::SearchMode::Hybrid => core::config::SearchMode::Hybrid,
+                coderet_core::config::SearchMode::Lexical => coderet_core::config::SearchMode::Lexical,
+                coderet_core::config::SearchMode::Semantic => coderet_core::config::SearchMode::Semantic,
+                coderet_core::config::SearchMode::Hybrid => coderet_core::config::SearchMode::Hybrid,
             };
             
             match retriever.search(&self.input, core_mode, top_k).await {
                 Ok(results) => {
                     self.results = results;
+                    if !self.results.is_empty() {
+                        self.selected_result_index = Some(0);
+                    }
                     self.status_message = format!("Found {} results.", self.results.len());
                 }
                 Err(e) => {
@@ -178,4 +215,24 @@ impl App {
             }
         }
     }
+}
+
+fn current_branch() -> Option<String> {
+    if let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+    {
+        if output.status.success() {
+            let mut name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if name == "HEAD" {
+                if let Ok(out2) = Command::new("git").args(["rev-parse", "--short", "HEAD"]).output() {
+                    if out2.status.success() {
+                        name = format!("detached_{}", String::from_utf8_lossy(&out2.stdout).trim());
+                    }
+                }
+            }
+            return Some(name.replace('/', "__").replace(' ', "_"));
+        }
+    }
+    None
 }

@@ -10,6 +10,9 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
-core = { path = "../core" }
+libcore = { path = "../core", package = "coderet-core" }
 tui = { path = "../tui" }
 tokio = { workspace = true }
+globset = { workspace = true }
+reqwest = { workspace = true, features = ["json", "blocking"] }
+serde_json = { workspace = true }

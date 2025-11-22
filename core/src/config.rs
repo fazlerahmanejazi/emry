@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -9,11 +8,17 @@ pub struct Config {
     pub search: SearchConfig,
     #[serde(default)]
     pub embeddings: EmbeddingsConfig,
+    #[serde(default = "default_auto_index_on_search")]
+    pub auto_index_on_search: bool,
 }
 
 impl Config {
     pub fn load() -> anyhow::Result<Self> {
-        let config_path = std::path::Path::new(".code-retriever.yml");
+        Self::load_from(None)
+    }
+
+    pub fn load_from(path: Option<&std::path::Path>) -> anyhow::Result<Self> {
+        let config_path = path.unwrap_or_else(|| std::path::Path::new(".code-retriever.yml"));
         if config_path.exists() {
             let content = std::fs::read_to_string(config_path)?;
             let config: Config = serde_yaml::from_str(&content)?;
@@ -74,8 +79,9 @@ pub struct EmbeddingsConfig {
 impl Default for EmbeddingsConfig {
     fn default() -> Self {
         Self {
-            backend: EmbeddingBackend::Local,
-            model_name: "BGESmallENV15".to_string(), // Example default
+            // Runtime chooses external when OPENAI_API_KEY is set, otherwise Ollama.
+            backend: EmbeddingBackend::Ollama,
+            model_name: "nomic-embed-text".to_string(),
         }
     }
 }
@@ -85,4 +91,9 @@ impl Default for EmbeddingsConfig {
 pub enum EmbeddingBackend {
     External,
     Local,
+    Ollama,
+}
+
+fn default_auto_index_on_search() -> bool {
+    true
 }

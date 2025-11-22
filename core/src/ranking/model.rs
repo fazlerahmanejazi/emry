@@ -1,5 +1,4 @@
 use crate::ranking::features::Features;
-use anyhow::Result;
 
 pub trait Ranker {
     fn score(&self, features: &Features) -> f32;

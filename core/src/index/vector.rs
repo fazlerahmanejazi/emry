@@ -1,4 +1,4 @@
-use crate::models::Chunk;
+use crate::models::{Chunk, Language};
 use anyhow::{anyhow, Result};
 use arrow::array::{ArrayRef, Float32Array, RecordBatch, StringArray, UInt64Array};
 use arrow::datatypes::{DataType, Field, Schema};
@@ -56,6 +56,7 @@ impl VectorIndex {
             Field::new("file_path", DataType::Utf8, false),
             Field::new("start_line", DataType::UInt64, false),
             Field::new("end_line", DataType::UInt64, false),
+            Field::new("language", DataType::Utf8, false),
             Field::new("content", DataType::Utf8, false),
             Field::new(
                 "embedding",
@@ -72,6 +73,10 @@ impl VectorIndex {
         let file_paths: Vec<String> = chunks_with_embeddings
             .iter()
             .map(|c| c.file_path.to_string_lossy().to_string())
+            .collect();
+        let languages: Vec<String> = chunks_with_embeddings
+            .iter()
+            .map(|c| c.language.to_string())
             .collect();
         let start_lines: Vec<u64> = chunks_with_embeddings
             .iter()
@@ -96,6 +101,7 @@ impl VectorIndex {
         let file_path_array: ArrayRef = Arc::new(StringArray::from(file_paths));
         let start_line_array: ArrayRef = Arc::new(UInt64Array::from(start_lines));
         let end_line_array: ArrayRef = Arc::new(UInt64Array::from(end_lines));
+        let language_array: ArrayRef = Arc::new(StringArray::from(languages));
         let content_array: ArrayRef = Arc::new(StringArray::from(contents));
         let embedding_array: ArrayRef = {
             let values = Float32Array::from(embeddings);
@@ -117,6 +123,7 @@ impl VectorIndex {
                 file_path_array,
                 start_line_array,
                 end_line_array,
+                language_array,
                 content_array,
                 embedding_array,
             ],
@@ -149,10 +156,10 @@ impl VectorIndex {
     }
 
     pub async fn search(&self, query_vector: &[f32], limit: usize) -> Result<Vec<(f32, Chunk)>> {
-        let dataset = self
-            .dataset
-            .as_ref()
-            .ok_or_else(|| anyhow!("No dataset available. Index may be empty."))?;
+        let dataset = match self.dataset.as_ref() {
+            Some(ds) => ds,
+            None => return Ok(Vec::new()),
+        };
 
         // Convert query vector to Float32Array
         let query_array = Float32Array::from(query_vector.to_vec());
@@ -200,6 +207,9 @@ impl VectorIndex {
                 .as_any()
                 .downcast_ref::<UInt64Array>()
                 .ok_or_else(|| anyhow!("Failed to cast end_line column"))?;
+            let languages = batch
+                .column_by_name("language")
+                .and_then(|col| col.as_any().downcast_ref::<StringArray>());
 
             let contents = batch
                 .column_by_name("content")
@@ -218,7 +228,9 @@ impl VectorIndex {
             for i in 0..batch.num_rows() {
                 let chunk = Chunk {
                     id: ids.value(i).to_string(),
-                    language: crate::models::Language::Unknown, // We'd need to store this
+                    language: languages
+                        .map(|arr| Language::from_name(arr.value(i)))
+                        .unwrap_or(Language::Unknown),
                     file_path: std::path::PathBuf::from(file_paths.value(i)),
                     start_line: start_lines.value(i) as usize,
                     end_line: end_lines.value(i) as usize,
@@ -240,5 +252,27 @@ impl VectorIndex {
         }
 
         Ok(scored_chunks)
+    }
+
+    pub async fn delete_chunks(&mut self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let dataset = match self.dataset.as_mut() {
+            Some(ds) => ds,
+            None => return Ok(()),
+        };
+
+        // Build predicate: id in [...]
+        let escaped: Vec<String> = ids
+            .iter()
+            .map(|id| id.replace('\'', ""))
+            .map(|id| format!("'{}'", id))
+            .collect();
+        let predicate = format!("id IN ({})", escaped.join(","));
+
+        // lance delete requires &str predicate
+        let _ = dataset.delete(&predicate).await?;
+        Ok(())
     }
 }
