@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use libcore::config::{Config, SearchMode};
-use libcore::chunking::{Chunker, PythonChunker, TypeScriptChunker, JavaChunker, CppChunker};
+use libcore::chunking::{Chunker};
 use libcore::index::lexical::LexicalIndex;
 use libcore::index::vector::VectorIndex;
 use libcore::index::manager::IndexManager;
@@ -182,10 +182,8 @@ pub async fn handle_index(full: bool, summarize: bool, config_path: Option<&Path
     }
 
     // Chunkers
-    let py_chunker = PythonChunker::new();
-    let ts_chunker = TypeScriptChunker::new();
-    let java_chunker = JavaChunker::new();
-    let cpp_chunker = CppChunker::new();
+    // Use GenericChunker for all languages
+    use libcore::chunking::GenericChunker;
 
     let mut new_chunks: Vec<libcore::models::Chunk> = Vec::new();
     let mut file_chunk_map: HashMap<PathBuf, Vec<String>> = HashMap::new();
@@ -213,13 +211,8 @@ pub async fn handle_index(full: bool, summarize: bool, config_path: Option<&Path
     // Chunk only files needing reindex
     let chunk_start = std::time::Instant::now();
     for (path, lang, content) in &to_reindex {
-        let chunks = match lang {
-            Language::Python => py_chunker.chunk(content, path)?,
-            Language::TypeScript | Language::JavaScript => ts_chunker.chunk(content, path)?,
-            Language::Java => java_chunker.chunk(content, path)?,
-            Language::Cpp => cpp_chunker.chunk(content, path)?,
-            Language::Unknown => Vec::new(),
-        };
+        let chunker = GenericChunker::with_config(lang.clone(), config.index.chunking.clone());
+        let chunks = chunker.chunk(content, path)?;
         file_chunk_map.insert(path.clone(), chunks.iter().map(|c| c.id.clone()).collect());
         new_chunks.extend(chunks);
     }

@@ -17,6 +17,12 @@ tree-sitter-python = "0.23"
 tree-sitter-java = "0.23"
 tree-sitter-typescript = "0.23"
 tree-sitter-cpp = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-php = "0.23"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-c = "0.23"
 sha2 = "0.10"
 hex = "0.4"
 regex = "1.10"
@@ -30,3 +36,5 @@ once_cell = { workspace = true }
 petgraph = { workspace = true }
 rayon = { workspace = true }
 itertools = { workspace = true }
+tiktoken-rs = "0.5"
+text-splitter = { version = "0.17", features = ["tiktoken-rs"] }

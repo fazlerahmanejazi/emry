@@ -36,6 +36,8 @@ pub struct IndexConfig {
     #[serde(default)]
     pub exclude_paths: Vec<String>,
     // Add more as needed
+    #[serde(default)]
+    pub chunking: crate::chunking::ChunkingConfig,
 }
 
 impl Default for IndexConfig {
@@ -43,6 +45,7 @@ impl Default for IndexConfig {
         Self {
             include_paths: vec!["**/*".to_string()],
             exclude_paths: vec![],
+            chunking: crate::chunking::ChunkingConfig::default(),
         }
     }
 }

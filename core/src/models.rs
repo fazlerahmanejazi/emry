@@ -8,6 +8,12 @@ pub enum Language {
     TypeScript,
     JavaScript,
     Cpp,
+    Go,
+    Rust,
+    Ruby,
+    Php,
+    CSharp,
+    C,
     Unknown,
 }
 
@@ -18,7 +24,13 @@ impl Language {
             "java" => Language::Java,
             "ts" | "tsx" => Language::TypeScript,
             "js" | "jsx" => Language::JavaScript,
-            "cpp" | "cxx" | "cc" | "hpp" | "hh" | "h" => Language::Cpp,
+            "cpp" | "cxx" | "cc" | "hpp" | "hh" => Language::Cpp,
+            "go" => Language::Go,
+            "rs" => Language::Rust,
+            "rb" => Language::Ruby,
+            "php" => Language::Php,
+            "cs" => Language::CSharp,
+            "c" | "h" => Language::C,
             _ => Language::Unknown,
         }
     }
@@ -29,7 +41,13 @@ impl Language {
             "java" => Language::Java,
             "typescript" | "ts" | "tsx" => Language::TypeScript,
             "javascript" | "js" | "jsx" => Language::JavaScript,
-            "cpp" | "c++" | "cc" | "cxx" | "hpp" | "hh" | "h" => Language::Cpp,
+            "cpp" | "c++" | "cc" | "cxx" | "hpp" | "hh" => Language::Cpp,
+            "go" | "golang" => Language::Go,
+            "rust" | "rs" => Language::Rust,
+            "ruby" | "rb" => Language::Ruby,
+            "php" => Language::Php,
+            "csharp" | "c#" | "cs" => Language::CSharp,
+            "c" => Language::C,
             _ => Language::Unknown,
         }
     }
@@ -51,6 +69,12 @@ impl std::fmt::Display for Language {
             Language::TypeScript => "typescript",
             Language::JavaScript => "javascript",
             Language::Cpp => "cpp",
+            Language::Go => "go",
+            Language::Rust => "rust",
+            Language::Ruby => "ruby",
+            Language::Php => "php",
+            Language::CSharp => "csharp",
+            Language::C => "c",
             Language::Unknown => "unknown",
         };
         write!(f, "{}", name)
