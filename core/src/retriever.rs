@@ -4,13 +4,18 @@ use crate::index::lexical::LexicalIndex;
 use crate::index::vector::VectorIndex;
 use crate::models::Chunk;
 use anyhow::Result;
+use crate::ranking::features::FeatureExtractor;
+use crate::ranking::model::Ranker;
+use crate::structure::index::SymbolIndex;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct Retriever {
     lexical_index: Arc<LexicalIndex>,
     vector_index: Arc<VectorIndex>,
-    embedder: Arc<dyn Embedder + Send + Sync>, // Use trait object
+    embedder: Arc<dyn Embedder + Send + Sync>,
+    symbol_index: Option<Arc<SymbolIndex>>,
+    ranker: Option<Box<dyn Ranker + Send + Sync>>,
     config: Config,
 }
 
@@ -19,12 +24,16 @@ impl Retriever {
         lexical_index: Arc<LexicalIndex>,
         vector_index: Arc<VectorIndex>,
         embedder: Arc<dyn Embedder + Send + Sync>,
+        symbol_index: Option<Arc<SymbolIndex>>,
+        ranker: Option<Box<dyn Ranker + Send + Sync>>,
         config: Config,
     ) -> Self {
         Self {
             lexical_index,
             vector_index,
             embedder,
+            symbol_index,
+            ranker,
             config,
         }
     }
@@ -33,19 +42,19 @@ impl Retriever {
         // let mode = &self.config.search.default_mode; // Use passed mode
         // let top_k = self.config.search.default_top_k;
 
-        match mode {
+        let mut candidates = match mode {
             SearchMode::Lexical => {
-                let results = self.lexical_index.search(query, top_k)?;
-                Ok(results)
+                let results = self.lexical_index.search(query, top_k * 2)?; // Fetch more for re-ranking
+                results
             }
             SearchMode::Semantic => {
                 let embedding = self.embedder.embed(&[query.to_string()])?.pop().unwrap();
-                let results = self.vector_index.search(&embedding, top_k).await?;
-                Ok(results)
+                let results = self.vector_index.search(&embedding, top_k * 2).await?;
+                results
             }
             SearchMode::Hybrid => {
                 // 1. Lexical Search
-                let lexical_results = self.lexical_index.search(query, top_k * 2)?; // Fetch more for fusion
+                let lexical_results = self.lexical_index.search(query, top_k * 2)?;
                 
                 // 2. Semantic Search
                 let embedding = self.embedder.embed(&[query.to_string()])?.pop().unwrap();
@@ -74,15 +83,43 @@ impl Retriever {
                     chunks.entry(chunk.id.clone()).or_insert(chunk);
                 }
 
-                let mut final_results: Vec<(f32, Chunk)> = scores.into_iter()
+                scores.into_iter()
                     .filter_map(|(id, score)| chunks.remove(&id).map(|c| (score, c)))
-                    .collect();
-
-                final_results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-                final_results.truncate(top_k);
-
-                Ok(final_results)
+                    .collect()
             }
+        };
+
+        // Re-ranking
+        if let Some(ranker) = &self.ranker {
+            let extractor = FeatureExtractor::new(self.symbol_index.as_deref());
+            
+            // We need original scores for features.
+            // In candidates, we have a combined score or single score.
+            // FeatureExtractor expects bm25 and vector scores separately.
+            // This is tricky with the current architecture where we lost the separate scores in Hybrid.
+            // For now, we'll use the candidate score as both or split if possible.
+            // Ideally, we should keep track of separate scores.
+            // Simplification: Use candidate score as "base score".
+            
+            let mut re_ranked = Vec::new();
+            for (score, chunk) in candidates {
+                // Approximation: if hybrid, score is mixed. If lexical, vector is 0.
+                let (bm25, vector) = match mode {
+                    SearchMode::Lexical => (score, 0.0),
+                    SearchMode::Semantic => (0.0, score),
+                    SearchMode::Hybrid => (score, score), // Rough approx
+                };
+
+                let features = extractor.extract(query, &chunk.content, bm25, vector);
+                let new_score = ranker.score(&features);
+                re_ranked.push((new_score, chunk));
+            }
+            candidates = re_ranked;
         }
+
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.truncate(top_k);
+
+        Ok(candidates)
     }
 }

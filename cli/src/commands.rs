@@ -7,6 +7,12 @@ use core::index::lexical::LexicalIndex;
 use core::index::vector::VectorIndex;
 use core::retriever::Retriever;
 use core::scanner::scan_repo;
+use core::structure::index::SymbolIndex;
+use core::structure::symbols::SymbolExtractor;
+use core::structure::graph::{CodeGraph, GraphBuilder};
+use core::summaries::generator::SummaryGenerator;
+use core::summaries::index::{Summary, SummaryIndex, SummaryLevel};
+use core::ranking::model::{LinearRanker, Ranker};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -28,6 +34,10 @@ pub enum Commands {
         /// Force a full rebuild
         #[arg(long)]
         full: bool,
+
+        /// Generate summaries (requires OpenAI API key)
+        #[arg(long)]
+        summarize: bool,
     },
     /// Search the index
     Search {
@@ -53,6 +63,14 @@ pub enum Commands {
         /// Launch TUI
         #[arg(long)]
         tui: bool,
+
+        /// Search for a symbol definition
+        #[arg(long)]
+        symbol: bool,
+
+        /// Search for a summary
+        #[arg(long)]
+        summary: bool,
     },
     /// Show index status
     Status,
@@ -77,7 +95,7 @@ impl From<CliSearchMode> for SearchMode {
     }
 }
 
-pub async fn handle_index(full: bool) -> Result<()> {
+pub async fn handle_index(full: bool, summarize: bool) -> Result<()> {
     println!("Indexing repository...");
     let root = std::env::current_dir()?;
     let config = Config::default(); // Load from file if exists
@@ -93,7 +111,7 @@ pub async fn handle_index(full: bool) -> Result<()> {
     let java_chunker = JavaChunker::new();
     let cpp_chunker = CppChunker::new();
 
-    for file in scanned_files {
+    for file in &scanned_files {
         let content = std::fs::read_to_string(&file.path)?;
         let chunks = match file.language {
             core::models::Language::Python => py_chunker.chunk(&content, &file.path)?,
@@ -163,6 +181,99 @@ pub async fn handle_index(full: bool) -> Result<()> {
 
     // 4. Index
     let index_dir = root.join(".codeindex");
+    std::fs::create_dir_all(&index_dir)?;
+
+    // Symbol Indexing
+    println!("Extracting symbols...");
+    let mut symbol_index = SymbolIndex::new(&index_dir.join("symbols.json"));
+    if full {
+        symbol_index.clear();
+    }
+    
+    let mut all_symbols = Vec::new();
+    for file in &scanned_files {
+        let content = std::fs::read_to_string(&file.path)?;
+        if let Ok(symbols) = SymbolExtractor::extract(&content, &file.path, file.language.clone()) {
+            all_symbols.extend(symbols);
+        }
+    }
+    symbol_index.add_symbols(all_symbols.clone());
+    symbol_index.save()?;
+    println!("Indexed {} symbols.", symbol_index.symbols.len());
+
+    // Graph Building
+    println!("Building code graph...");
+    let mut graph = CodeGraph::new(&index_dir.join("graph.json"));
+    if full {
+        graph.clear();
+    }
+    GraphBuilder::build(&mut graph, &all_symbols);
+    graph.save()?;
+    graph.save()?;
+    println!("Graph built with {} nodes and {} edges.", graph.nodes.len(), graph.edges.len());
+
+    // Summarization
+    if summarize {
+        println!("Generating summaries (this may take a while)...");
+        let mut summary_index = SummaryIndex::new(&index_dir.join("summaries.json"));
+        if full {
+            summary_index.clear();
+        }
+
+        match SummaryGenerator::new(None) {
+            Ok(generator) => {
+                let mut count = 0;
+                for symbol in &all_symbols {
+                    // Only summarize functions and classes for now
+                    let level = match symbol.kind {
+                        core::structure::symbols::SymbolKind::Function | core::structure::symbols::SymbolKind::Method => SummaryLevel::Function,
+                        core::structure::symbols::SymbolKind::Class | core::structure::symbols::SymbolKind::Interface => SummaryLevel::Class,
+                        _ => continue,
+                    };
+
+                    // Check if summary already exists (skip if incremental)
+                    if !full && summary_index.get_summary(&symbol.id).is_some() {
+                        continue;
+                    }
+
+                    // Find content for symbol (naive approach: read file again or use cached chunks?)
+                    // We don't have easy access to symbol source text here without reading file.
+                    // For Phase 2 prototype, let's read file and extract lines.
+                    // This is slow but works.
+                    if let Ok(content) = std::fs::read_to_string(&symbol.file_path) {
+                        let lines: Vec<&str> = content.lines().collect();
+                        if symbol.start_line > 0 && symbol.end_line <= lines.len() {
+                            let symbol_text = lines[symbol.start_line-1..symbol.end_line].join("\n");
+                            
+                            // Context: File path and name
+                            let context = format!("File: {}, Symbol: {}", symbol.file_path.display(), symbol.name);
+                            
+                            match generator.generate(&symbol_text, &context) {
+                                Ok(summary_text) => {
+                                    let summary = Summary {
+                                        id: symbol.id.clone(),
+                                        level,
+                                        target_id: symbol.id.clone(),
+                                        text: summary_text,
+                                    };
+                                    summary_index.add_summary(summary);
+                                    count += 1;
+                                    if count % 5 == 0 {
+                                        println!("Generated {} summaries...", count);
+                                    }
+                                }
+                                Err(e) => eprintln!("Failed to generate summary for {}: {}", symbol.name, e),
+                            }
+                        }
+                    }
+                }
+                summary_index.save()?;
+                println!("Generated and indexed {} summaries.", count);
+            }
+            Err(e) => eprintln!("Skipping summarization: {}", e),
+        }
+    }
+
     let lexical_index = LexicalIndex::new(&index_dir.join("lexical"))?;
     // lexical_index.add_chunks(&all_chunks)?; // Needs mut
     // Re-open as mutable or just use it. LexicalIndex::new returns instance.
@@ -179,7 +290,7 @@ pub async fn handle_index(full: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn handle_search(query: String, mode: Option<CliSearchMode>, top: usize, tui: bool) -> Result<()> {
+pub async fn handle_search(query: String, mode: Option<CliSearchMode>, top: usize, tui: bool, symbol: bool, summary: bool) -> Result<()> {
     if tui {
         println!("TUI not implemented yet.");
         return Ok(());
@@ -187,6 +298,43 @@ pub async fn handle_search(query: String, mode: Option<CliSearchMode>, top: usiz
 
     let root = std::env::current_dir()?;
     let index_dir = root.join(".codeindex");
+    
+    if symbol {
+        let symbol_index = SymbolIndex::load(&index_dir.join("symbols.json"))?;
+        let matches = symbol_index.search(&query);
+        println!("Found {} symbol matches:", matches.len());
+        for (i, sym) in matches.iter().enumerate() {
+            println!("\nMatch #{}: {:?}", i + 1, sym.kind);
+            println!("Name: {}", sym.name);
+            println!("File: {}:{}-{}", sym.file_path.display(), sym.start_line, sym.end_line);
+        }
+        return Ok(());
+    }
+
+    if summary {
+        let summary_path = index_dir.join("summaries.json");
+        if !summary_path.exists() {
+            println!("No summaries index found. Run 'index --summarize' first.");
+            return Ok(());
+        }
+        let summary_index = SummaryIndex::load(&summary_path)?;
+        // Naive search: iterate all summaries and check if ID matches query or text contains query
+        // For Phase 2, let's just lookup by ID (exact match) or simple text search
+        println!("Searching summaries for '{}'...", query);
+        let mut found = false;
+        for (id, sum) in &summary_index.summaries {
+            if id.contains(&query) || sum.text.contains(&query) {
+                println!("\nSummary for {}:", id);
+                println!("{}", sum.text);
+                found = true;
+            }
+        }
+        if !found {
+            println!("No summaries found matching '{}'.", query);
+        }
+        return Ok(());
+    }
+
     let config = Config::default(); // Load
 
     let lexical_index = Arc::new(LexicalIndex::new(&index_dir.join("lexical"))?);
@@ -212,7 +360,20 @@ pub async fn handle_search(query: String, mode: Option<CliSearchMode>, top: usiz
     let core_mode = mode.map_or(config.search.default_mode, |m| m.into());
     let top_k = top;
 
-    let retriever = Retriever::new(lexical_index, vector_index, embedder, search_config);
+    // Load Symbol Index for Ranking if available
+    let symbol_index = SymbolIndex::load(&index_dir.join("symbols.json")).ok().map(Arc::new);
+    
+    // Initialize Ranker
+    let ranker: Option<Box<dyn Ranker + Send + Sync>> = Some(Box::new(LinearRanker::default()));
+
+    let retriever = Retriever::new(
+        lexical_index,
+        vector_index,
+        embedder,
+        symbol_index,
+        ranker,
+        search_config
+    );
     let results = retriever.search(&query, core_mode, top_k).await?;
 
     println!("Found {} results:", results.len());

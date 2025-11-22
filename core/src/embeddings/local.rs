@@ -15,8 +15,20 @@ impl LocalEmbedder {
             _ => EmbeddingModel::BGESmallENV15, // Default
         };
 
+        // Use global cache directory to avoid re-downloading models per repo
+        let cache_dir = std::env::var("FASTEMBED_CACHE_PATH")
+            .ok()
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|home| format!("{}/.cache/fastembed", home))
+            })
+            .unwrap_or_else(|| ".fastembed_cache".to_string());
+
         let model = TextEmbedding::try_new(
-            InitOptions::new(embedding_model).with_show_download_progress(true),
+            InitOptions::new(embedding_model)
+                .with_cache_dir(std::path::PathBuf::from(cache_dir))
+                .with_show_download_progress(true),
         )
         .map_err(|e| anyhow!("Failed to initialize local embedding model: {}", e))?;
 
