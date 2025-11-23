@@ -1,0 +1,16 @@
+# Benchmarking Requirements
+# Core packages
+datasets>=2.14.0
+numpy>=1.24.0
+scipy>=1.10.0
+tqdm>=4.65.0
+scikit-learn>=1.3.0
+
+# For local visualizations (recommended!)
+matplotlib>=3.7.0
+
+# Optional: W&B for cloud dashboards (comment out if not using)
+# wandb>=0.16.0
+
+# Optional: CoIR evaluation framework (comment out if not using)
+# coir-eval>=0.1.0

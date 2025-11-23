@@ -1,9 +1,7 @@
-use tiktoken_rs::{cl100k_base, CoreBPE};
 use once_cell::sync::Lazy;
+use tiktoken_rs::{cl100k_base, CoreBPE};
 
-static TOKENIZER: Lazy<CoreBPE> = Lazy::new(|| {
-    cl100k_base().expect("Failed to load tokenizer")
-});
+static TOKENIZER: Lazy<CoreBPE> = Lazy::new(|| cl100k_base().expect("Failed to load tokenizer"));
 
 /// Count exact tokens using tiktoken (GPT-compatible)
 pub fn count_tokens(text: &str) -> usize {

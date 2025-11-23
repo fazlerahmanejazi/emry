@@ -1,3 +1,3 @@
-pub mod symbols;
-pub mod index;
 pub mod graph;
+pub mod index;
+pub mod symbols;

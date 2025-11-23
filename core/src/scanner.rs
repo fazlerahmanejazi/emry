@@ -1,8 +1,8 @@
 use crate::config::IndexConfig;
 use crate::models::Language;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
-use globset::{Glob, GlobSet, GlobSetBuilder};
 
 pub struct ScannedFile {
     pub path: PathBuf,
@@ -18,13 +18,11 @@ pub fn scan_repo(root: &Path, config: &IndexConfig) -> Vec<ScannedFile> {
         ".git/**",
     ];
 
-    let include_set = build_globset(
-        if config.include_paths.is_empty() {
-            vec!["**/*".to_string()]
-        } else {
-            config.include_paths.clone()
-        }
-    );
+    let include_set = build_globset(if config.include_paths.is_empty() {
+        vec!["**/*".to_string()]
+    } else {
+        config.include_paths.clone()
+    });
     let mut exclude_patterns: Vec<String> = config.exclude_paths.clone();
     exclude_patterns.extend(DEFAULT_EXCLUDES.iter().map(|s| s.to_string()));
     let exclude_set = build_globset(exclude_patterns);
@@ -75,7 +73,7 @@ pub fn scan_repo(root: &Path, config: &IndexConfig) -> Vec<ScannedFile> {
     files
 }
 
-fn build_globset(patterns: Vec<String>) -> Option<GlobSet> {
+pub fn build_globset(patterns: Vec<String>) -> Option<GlobSet> {
     if patterns.is_empty() {
         return None;
     }

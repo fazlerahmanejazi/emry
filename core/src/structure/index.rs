@@ -22,7 +22,7 @@ impl SymbolIndex {
                 return index;
             }
         }
-        
+
         Self {
             symbols: HashMap::new(),
             path: path.to_path_buf(),
@@ -66,7 +66,7 @@ impl SymbolIndex {
         // For now, just return empty if no exact match
         Vec::new()
     }
-    
+
     // Clear index (for full rebuild)
     pub fn clear(&mut self) {
         self.symbols.clear();

@@ -1,76 +1,66 @@
-use coderet_core::retriever::{Retriever, SearchResult};
 use coderet_core::config::Config;
-use std::sync::Arc;
-use std::process::Command;
+use coderet_core::agent::brain::{Agent, AgentOptions};
+use coderet_core::agent::llm::LLMClient;
+use coderet_core::agent::tools::{ToolRegistry, SearchTool, PathTool, ReadCodeTool, GrepTool, SymbolTool, ReferencesTool, ListDirTool, SummaryTool};
+use coderet_core::index::lexical::LexicalIndex;
+use coderet_core::index::vector::VectorIndex;
+use coderet_core::structure::index::SymbolIndex;
+use coderet_core::structure::graph::CodeGraph;
+use coderet_core::retriever::Retriever;
+use coderet_core::ranking::model::{Ranker, LinearRanker};
+use coderet_core::summaries::index::SummaryIndex;
+use coderet_core::summaries::vector::SummaryVectorIndex;
 use std::path::PathBuf;
+use std::process::Command;
+use std::sync::Arc;
 
 pub enum InputMode {
     Normal,
     Editing,
 }
 
+#[derive(Clone)]
+pub struct Message {
+    pub role: String, // "user", "agent", "system"
+    pub content: String,
+}
+
 pub struct App {
     pub input: String,
     pub input_mode: InputMode,
-    pub results: Vec<SearchResult>,
-    pub selected_result_index: Option<usize>,
-    pub retriever: Option<Retriever>,
+    pub messages: Vec<Message>,
+    pub agent: Option<Agent>,
     pub status_message: String,
+    pub scroll_offset: usize,
 }
 
 impl App {
     pub fn new() -> App {
-        // We should load config and retriever here or pass it in.
-        // For simplicity, we'll try to load default config and initialize retriever if index exists.
-        // But initializing retriever might be slow/async.
-        // For now, we start with empty retriever and maybe load it on first search or init.
-        
-        let mut app = App {
+        App {
             input: String::new(),
             input_mode: InputMode::Normal,
-            results: Vec::new(),
-            selected_result_index: None,
-            retriever: None,
-            status_message: "Press 'i' to index, 's' to search, 'q' to quit.".to_string(),
-        };
-        
-        // Try to init retriever
-        if let Ok(_config) = Config::load() { // Assuming Config::load exists or we use default
-             // We need to know where the index is. Config doesn't store index path directly usually, 
-             // but we can assume default `.codeindex`.
-             let index_dir = std::path::Path::new(".codeindex");
-             if index_dir.exists() {
-                 // We need to initialize retriever.
-                 // Retriever::new takes lexical and vector indices.
-                 // This logic is duplicated from CLI. Ideally we should share it.
-                 // For now, we'll skip auto-init or do it simply.
-                 // Let's just set status.
-                 app.status_message = "Index found. Press 's' to search.".to_string();
-             } else {
-                 app.status_message = "No index found. Press 'i' to index.".to_string();
-             }
+            messages: vec![
+                Message {
+                    role: "system".to_string(),
+                    content: "Agent TUI - Press 'a' to ask a question, 'q' to quit.".to_string(),
+                }
+            ],
+            agent: None,
+            status_message: "Initializing...".to_string(),
+            scroll_offset: 0,
         }
-        
-        app
     }
 
     pub fn on_key(&mut self, c: char) {
         match self.input_mode {
             InputMode::Normal => {
                 match c {
-                    'i' => {
-                        // Trigger indexing? 
-                        // Indexing is a heavy operation. 
-                        // We probably shouldn't do it in TUI main thread without async/loading state.
-                        // For Phase 1, maybe just tell user to run CLI index?
-                        self.status_message = "Please run 'code-retriever index' from CLI to index.".to_string();
-                    }
-                    's' => {
+                    'a' => {
                         self.input_mode = InputMode::Editing;
-                        self.status_message = "Enter query...".to_string();
+                        self.status_message = "Enter your question...".to_string();
                     }
-                    'j' => self.select_next(),
-                    'k' => self.select_prev(),
+                    'j' => self.scroll_down(),
+                    'k' => self.scroll_up(),
                     _ => {}
                 }
             }
@@ -79,141 +69,159 @@ impl App {
             }
         }
     }
-    
+
     pub fn on_char(&mut self, c: char) {
         if let InputMode::Editing = self.input_mode {
             self.input.push(c);
         }
     }
-    
+
     pub fn on_backspace(&mut self) {
         if let InputMode::Editing = self.input_mode {
             self.input.pop();
         }
     }
-    
+
     pub fn on_esc(&mut self) {
         self.input_mode = InputMode::Normal;
+        self.input.clear();
         self.status_message = "Normal mode.".to_string();
     }
 
     pub fn on_up(&mut self) {
         if let InputMode::Normal = self.input_mode {
-            self.select_prev();
+            self.scroll_up();
         }
     }
 
     pub fn on_down(&mut self) {
         if let InputMode::Normal = self.input_mode {
-            self.select_next();
+            self.scroll_down();
         }
     }
 
-    fn select_next(&mut self) {
-        if self.results.is_empty() {
-            return;
-        }
-        let idx = self.selected_result_index.unwrap_or(0);
-        let next = (idx + 1).min(self.results.len().saturating_sub(1));
-        self.selected_result_index = Some(next);
+    fn scroll_up(&mut self) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(1);
     }
 
-    fn select_prev(&mut self) {
-        if self.results.is_empty() {
-            return;
-        }
-        let idx = self.selected_result_index.unwrap_or(0);
-        let prev = idx.saturating_sub(1);
-        self.selected_result_index = Some(prev);
+    fn scroll_down(&mut self) {
+        self.scroll_offset = self.scroll_offset.saturating_add(1);
     }
-    
+
     pub async fn on_enter(&mut self) {
         if let InputMode::Editing = self.input_mode {
             self.input_mode = InputMode::Normal;
-            self.status_message = format!("Searching for: {}", self.input);
-            // Perform search
-            self.perform_search().await;
-        }
-    }
-    
-    async fn perform_search(&mut self) {
-        // Initialize retriever if needed
-        if self.retriever.is_none() {
-             let branch = current_branch().unwrap_or_else(|| "default".to_string());
-             let index_dir = PathBuf::from(".codeindex").join("branches").join(branch);
-             if !index_dir.exists() {
-                 self.status_message = "Index not found. Run 'code-retriever index' first.".to_string();
-                 return;
-             }
-             
-             // Load config
-             let config = Config::load().unwrap_or_default();
-             
-             // Initialize components
-             let lexical_index = match coderet_core::index::lexical::LexicalIndex::new(&index_dir.join("lexical")) {
-                 Ok(idx) => Arc::new(idx),
-                 Err(e) => {
-                     self.status_message = format!("Failed to load lexical index: {}", e);
-                     return;
-                 }
-             };
-             
-             let vector_index = match coderet_core::index::vector::VectorIndex::new(&index_dir.join("vector.lance")).await {
-                 Ok(idx) => Arc::new(idx),
-                 Err(e) => {
-                     self.status_message = format!("Failed to load vector index: {}", e);
-                     return;
-                 }
-             };
-             
-             let embedder: Arc<dyn coderet_core::embeddings::Embedder + Send + Sync> = match coderet_core::embeddings::external::ExternalEmbedder::new(None) {
-                 Ok(e) => Arc::new(e),
-                 Err(e) => {
-                     // If external fails (no API key), we can't do semantic search.
-                     // We should handle this gracefully.
-                     // For now, we'll create a dummy embedder or just fail semantic.
-                     // But Retriever needs an embedder.
-                     // Let's try to proceed? No, Retriever needs it.
-                     // We'll set status and return.
-                     self.status_message = format!("Semantic search unavailable: {}", e);
-                     // We can still do lexical search if we had a way to disable semantic in Retriever.
-                     // But Retriever constructor takes embedder.
-                     // We'll fail for now.
-                     return;
-                 }
-             };
-             
-             let retriever = Retriever::new(lexical_index, vector_index, embedder, None, None, None, config);
-             self.retriever = Some(retriever);
-        }
-        
-        if let Some(retriever) = &self.retriever {
-            // Perform search
-            // We need to know the mode. Default to Hybrid.
-            let config = Config::load().unwrap_or_default();
-            let mode = config.search.default_mode;
-            let top_k = config.search.default_top_k;
+            let query = self.input.clone();
+            self.input.clear();
             
-            // Map config mode to core mode
-            let core_mode = match mode {
-                coderet_core::config::SearchMode::Lexical => coderet_core::config::SearchMode::Lexical,
-                coderet_core::config::SearchMode::Semantic => coderet_core::config::SearchMode::Semantic,
-                coderet_core::config::SearchMode::Hybrid => coderet_core::config::SearchMode::Hybrid,
-            };
+            if query.trim().is_empty() {
+                self.status_message = "Query cannot be empty".to_string();
+                return;
+            }
+
+            // Add user message
+            self.messages.push(Message {
+                role: "user".to_string(),
+                content: query.clone(),
+            });
+
+            self.status_message = "Agent is thinking...".to_string();
             
-            match retriever.search(&self.input, core_mode, top_k).await {
-                Ok(results) => {
-                    self.results = results;
-                    if !self.results.is_empty() {
-                        self.selected_result_index = Some(0);
-                    }
-                    self.status_message = format!("Found {} results.", self.results.len());
+            // Initialize agent if needed
+            if self.agent.is_none() {
+                if let Err(e) = self.initialize_agent().await {
+                    self.messages.push(Message {
+                        role: "system".to_string(),
+                        content: format!("Error initializing agent: {}", e),
+                    });
+                    self.status_message = "Error initializing agent".to_string();
+                    return;
                 }
-                Err(e) => {
-                    self.status_message = format!("Search failed: {}", e);
+            }
+
+            // Ask agent
+            if let Some(agent) = &self.agent {
+                match agent.ask(&query, AgentOptions::default()).await {
+                    Ok(answer) => {
+                        self.messages.push(Message {
+                            role: "agent".to_string(),
+                            content: answer,
+                        });
+                        self.status_message = "Ready".to_string();
+                    }
+                    Err(e) => {
+                        self.messages.push(Message {
+                            role: "system".to_string(),
+                            content: format!("Error: {}", e),
+                        });
+                        self.status_message = "Error".to_string();
+                    }
                 }
             }
         }
+    }
+
+    async fn initialize_agent(&mut self) -> anyhow::Result<()> {
+        let branch = current_branch().unwrap_or_else(|| "default".to_string());
+        let index_dir = PathBuf::from(".codeindex").join("branches").join(branch);
+        
+        if !index_dir.exists() {
+            return Err(anyhow::anyhow!("Index not found. Run 'coderet index' first."));
+        }
+
+        let config = Config::load().unwrap_or_default();
+
+        // Initialize components
+        let lexical_index = Arc::new(LexicalIndex::new(&index_dir.join("lexical"))?);
+        let vector_index = Arc::new(VectorIndex::new(&index_dir.join("vector.lance")).await?);
+        
+        let embedder = crate::embeddings_util::select_embedder(&config.embeddings)
+            .ok_or_else(|| anyhow::anyhow!("No suitable embedder found."))?;
+
+        let symbol_index = SymbolIndex::load(&index_dir.join("symbols.json")).ok().map(Arc::new);
+        let graph = CodeGraph::load(&index_dir.join("graph.json")).ok().map(Arc::new);
+        let summary_index = SummaryIndex::load(&index_dir.join("summaries.json")).ok().map(Arc::new);
+        let summary_vector = SummaryVectorIndex::new(&index_dir.join("summary.lance")).await.ok();
+        let ranker: Option<Box<dyn Ranker + Send + Sync>> = Some(Box::new(LinearRanker::default()));
+
+        let retriever = Arc::new(Retriever::new(
+            lexical_index,
+            vector_index,
+            embedder,
+            symbol_index.clone(),
+            summary_index.clone(),
+            graph.clone(),
+            ranker,
+            summary_vector,
+        ));
+
+        // Setup Tools
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(SearchTool::new(retriever)));
+        registry.register(Arc::new(ReadCodeTool::new()));
+        registry.register(Arc::new(GrepTool::new()));
+        registry.register(Arc::new(ReferencesTool::new()));
+        registry.register(Arc::new(ListDirTool::new()));
+        if let Some(sum) = summary_index {
+            registry.register(Arc::new(SummaryTool::new(sum)));
+        }
+        
+        if let Some(idx) = symbol_index {
+            registry.register(Arc::new(SymbolTool::new(idx)));
+        }
+        
+        if let Some(g) = graph {
+            registry.register(Arc::new(PathTool::new(g)));
+        }
+
+        // Setup Agent
+        let llm = LLMClient::new(None)?;
+        let agent = Agent::new(llm, registry);
+        
+        self.agent = Some(agent);
+        self.status_message = "Agent initialized".to_string();
+        
+        Ok(())
     }
 }
 
@@ -225,7 +233,10 @@ fn current_branch() -> Option<String> {
         if output.status.success() {
             let mut name = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if name == "HEAD" {
-                if let Ok(out2) = Command::new("git").args(["rev-parse", "--short", "HEAD"]).output() {
+                if let Ok(out2) = Command::new("git")
+                    .args(["rev-parse", "--short", "HEAD"])
+                    .output()
+                {
                     if out2.status.success() {
                         name = format!("detached_{}", String::from_utf8_lossy(&out2.stdout).trim());
                     }

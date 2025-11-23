@@ -12,7 +12,7 @@ use std::io;
 
 pub mod app;
 pub mod ui;
-
+mod embeddings_util;
 use app::App;
 
 pub async fn run_tui() -> Result<()> {
@@ -52,8 +52,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::R
         if let Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Char('q') => return Ok(()),
-                KeyCode::Char('i') => app.on_key('i'), // Index
-                KeyCode::Char('s') => app.on_key('s'), // Search input
+                KeyCode::Char('a') => app.on_key('a'), // Ask agent
+                KeyCode::Char('j') => app.on_key('j'), // Scroll down
+                KeyCode::Char('k') => app.on_key('k'), // Scroll up
                 KeyCode::Enter => app.on_enter().await,
                 KeyCode::Esc => app.on_esc(),
                 KeyCode::Backspace => app.on_backspace(),

@@ -1,0 +1,10 @@
+{"query_id": "mock_0", "query": "Sample query 0", "dataset": "mock", "latency_ms": 0.009059906005859375, "relevances": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:12.557030"}
+{"query_id": "mock_1", "query": "Sample query 1", "dataset": "mock", "latency_ms": 0.006198883056640625, "relevances": [0, 1, 0, 0, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:12.557284"}
+{"query_id": "mock_2", "query": "Sample query 2", "dataset": "mock", "latency_ms": 0.0059604644775390625, "relevances": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:12.557542"}
+{"query_id": "mock_3", "query": "Sample query 3", "dataset": "mock", "latency_ms": 0.005245208740234375, "relevances": [0, 0, 0, 1, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:12.557618"}
+{"query_id": "mock_4", "query": "Sample query 4", "dataset": "mock", "latency_ms": 0.003814697265625, "relevances": [0, 0, 0, 0, 1, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:12.557674"}
+{"query_id": "mock_5", "query": "Sample query 5", "dataset": "mock", "latency_ms": 0.0040531158447265625, "relevances": [0, 0, 0, 0, 0, 1, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:12.557726"}
+{"query_id": "mock_6", "query": "Sample query 6", "dataset": "mock", "latency_ms": 0.0040531158447265625, "relevances": [0, 0, 0, 0, 0, 0, 1, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:12.557772"}
+{"query_id": "mock_7", "query": "Sample query 7", "dataset": "mock", "latency_ms": 0.003814697265625, "relevances": [0, 0, 0, 0, 0, 0, 0, 1, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:12.557824"}
+{"query_id": "mock_8", "query": "Sample query 8", "dataset": "mock", "latency_ms": 0.0040531158447265625, "relevances": [0, 0, 0, 0, 0, 0, 0, 0, 1, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:12.557874"}
+{"query_id": "mock_9", "query": "Sample query 9", "dataset": "mock", "latency_ms": 0.003814697265625, "relevances": [0, 0, 0, 0, 0, 0, 0, 0, 0, 1], "num_relevant": 1, "timestamp": "2025-11-23T01:31:12.557918"}

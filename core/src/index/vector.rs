@@ -35,21 +35,15 @@ impl VectorIndex {
         }
 
         // Filter chunks that have embeddings
-        let chunks_with_embeddings: Vec<&Chunk> = chunks
-            .iter()
-            .filter(|c| c.embedding.is_some())
-            .collect();
+        let chunks_with_embeddings: Vec<&Chunk> =
+            chunks.iter().filter(|c| c.embedding.is_some()).collect();
 
         if chunks_with_embeddings.is_empty() {
             return Ok(());
         }
 
         // Build Arrow schema
-        let embedding_dim = chunks_with_embeddings[0]
-            .embedding
-            .as_ref()
-            .unwrap()
-            .len();
+        let embedding_dim = chunks_with_embeddings[0].embedding.as_ref().unwrap().len();
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -69,7 +63,10 @@ impl VectorIndex {
         ]));
 
         // Build arrays
-        let ids: Vec<String> = chunks_with_embeddings.iter().map(|c| c.id.clone()).collect();
+        let ids: Vec<String> = chunks_with_embeddings
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
         let file_paths: Vec<String> = chunks_with_embeddings
             .iter()
             .map(|c| c.file_path.to_string_lossy().to_string())
@@ -106,14 +103,12 @@ impl VectorIndex {
         let embedding_array: ArrayRef = {
             let values = Float32Array::from(embeddings);
             let field = Arc::new(Field::new("item", DataType::Float32, true));
-            Arc::new(
-                arrow::array::FixedSizeListArray::new(
-                    field,
-                    embedding_dim as i32,
-                    Arc::new(values),
-                    None,
-                )
-            )
+            Arc::new(arrow::array::FixedSizeListArray::new(
+                field,
+                embedding_dim as i32,
+                Arc::new(values),
+                None,
+            ))
         };
 
         let batch = RecordBatch::try_new(
@@ -240,6 +235,8 @@ impl VectorIndex {
                     content_hash: String::new(),
                     content: contents.value(i).to_string(),
                     embedding: None,
+                    parent_scope: None,
+                    scope_path: Vec::new(),
                 };
 
                 // Convert distance to similarity score (lower distance = higher similarity)

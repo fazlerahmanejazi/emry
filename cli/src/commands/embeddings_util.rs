@@ -1,4 +1,4 @@
-use libcore::config::{EmbeddingsConfig, EmbeddingBackend};
+use libcore::config::{EmbeddingBackend, EmbeddingsConfig};
 use libcore::embeddings::{external::ExternalEmbedder, ollama::OllamaEmbedder, Embedder};
 use std::env;
 use std::sync::Arc;

@@ -1,9 +1,9 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SummaryLevel {
@@ -20,6 +20,26 @@ pub struct Summary {
     pub level: SummaryLevel,
     pub target_id: String, // Symbol ID or File Path
     pub text: String,
+    #[serde(default)]
+    pub file_path: Option<std::path::PathBuf>,
+    #[serde(default)]
+    pub start_line: Option<usize>,
+    #[serde(default)]
+    pub end_line: Option<usize>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub prompt_version: Option<String>,
+    #[serde(default)]
+    pub generated_at: Option<u64>,
+    #[serde(default)]
+    pub source_hash: Option<String>,
+    #[serde(default)]
+    pub embedding: Option<Vec<f32>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -67,8 +87,35 @@ impl SummaryIndex {
     pub fn get_summary(&self, id: &str) -> Option<&Summary> {
         self.summaries.get(id)
     }
-    
+
     pub fn clear(&mut self) {
         self.summaries.clear();
     }
+
+    pub fn semantic_search(
+        &self,
+        query: &str,
+        embedder: &dyn crate::embeddings::Embedder,
+        top: usize,
+    ) -> anyhow::Result<Vec<(f32, &Summary)>> {
+        let query_emb = embedder.embed(&[query.to_string()])?.pop().unwrap_or_default();
+        if query_emb.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut scored = Vec::new();
+        for summary in self.summaries.values() {
+            if let Some(emb) = &summary.embedding {
+                let score = dot(&query_emb, emb);
+                scored.push((score, summary));
+            }
+        }
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top);
+        Ok(scored)
+    }
+}
+
+fn dot(a: &[f32], b: &[f32]) -> f32 {
+    let len = a.len().min(b.len());
+    a.iter().zip(b.iter()).take(len).map(|(x, y)| x * y).sum()
 }

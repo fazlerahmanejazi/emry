@@ -1,0 +1,11 @@
+{
+  "config": "smoke",
+  "datasets": [
+    "cosqa"
+  ],
+  "num_queries": 0,
+  "duration_sec": 21.168599128723145,
+  "metrics": {},
+  "run_id": "2025-11-23_012434",
+  "timestamp": "2025-11-23T01:24:55.623771"
+}

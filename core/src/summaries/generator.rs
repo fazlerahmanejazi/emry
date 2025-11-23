@@ -7,31 +7,41 @@ pub struct SummaryGenerator {
     api_key: String,
     model: String,
     api_url: String,
+    pub max_tokens: usize,
+    pub prompt_version: String,
+    pub retries: u8,
 }
 
 impl SummaryGenerator {
-    pub fn new(model: Option<String>) -> Result<Self> {
+    pub fn new(model: Option<String>, max_tokens: usize, prompt_version: String, retries: u8) -> Result<Self> {
         // Check if OpenAI Key is present to decide default provider
         let openai_key = env::var("OPENAI_API_KEY").ok();
-        
+
         let (default_url, default_model, api_key) = if let Some(k) = openai_key {
             // User has OpenAI key, default to OpenAI
             ("https://api.openai.com/v1", "gpt-4o-mini", k)
         } else {
             // No OpenAI key, default to Local Ollama
-            ("http://localhost:11434/v1", "qwen2.5-coder:1.5b", "dummy".to_string())
+            (
+                "http://localhost:11434/v1",
+                "qwen2.5-coder:1.5b",
+                "dummy".to_string(),
+            )
         };
 
         // Allow overrides via environment variables
         let api_url = env::var("LLM_API_BASE").unwrap_or_else(|_| default_url.to_string());
-        let model = model.or_else(|| env::var("LLM_MODEL").ok())
+        let model = model
+            .or_else(|| env::var("LLM_MODEL").ok())
             .unwrap_or_else(|| default_model.to_string());
 
         // Safety check: If URL is OpenAI but no key provided (and we are using dummy)
         if api_url.contains("openai.com") && api_key == "dummy" {
-             return Err(anyhow!("OPENAI_API_KEY environment variable not set for OpenAI URL"));
+            return Err(anyhow!(
+                "OPENAI_API_KEY environment variable not set for OpenAI URL"
+            ));
         }
-        
+
         // Ensure URL ends with /chat/completions if it's just the base
         let endpoint = if api_url.ends_with("/chat/completions") {
             api_url
@@ -44,45 +54,69 @@ impl SummaryGenerator {
             api_key,
             model,
             api_url: endpoint,
+            max_tokens,
+            prompt_version,
+            retries,
         })
     }
 
     pub fn generate(&self, code: &str, context: &str) -> Result<String> {
         let prompt = format!(
-            "You are a code summarization assistant. Summarize the following code concisely.\n\
-            Context: {}\n\
-            Code:\n```\n{}\n```\n\
-            Summary:",
+            "You are a code summarization assistant. Provide a concise, structured summary with the following fields:\n\
+- Intent: what the code does\n\
+- Inputs: parameters/inputs\n\
+- Outputs: return values/effects\n\
+- SideEffects: external IO/state changes\n\
+- Dependencies: important calls or types\n\
+Use short phrases, no bullets, max 4 sentences total.\n\
+Context: {}\n\
+Code:\n{}\n",
             context, code
         );
 
-        let res = tokio::task::block_in_place(|| {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(async {
-                self.client
-                    .post(&self.api_url)
-                    .header("Authorization", format!("Bearer {}", self.api_key))
-                    .json(&json!({
-                        "model": self.model,
-                        "messages": [
-                            {"role": "system", "content": "You are a helpful assistant that summarizes code."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "max_tokens": 150,
-                        "temperature": 0.3
-                    }))
-                    .send()
-                    .await?
-                    .json::<serde_json::Value>()
-                    .await
-            })
-        }).map_err(|e| anyhow!("Failed to call OpenAI API: {}", e))?;
+        let mut last_err = None;
+        for _ in 0..=self.retries {
+            let res = tokio::task::block_in_place(|| {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    self.client
+                        .post(&self.api_url)
+                        .header("Authorization", format!("Bearer {}", self.api_key))
+                        .json(&json!({
+                            "model": self.model,
+                            "messages": [
+                                {"role": "system", "content": "You summarize code concisely with required fields."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            "max_tokens": self.max_tokens,
+                            "temperature": 0.0
+                        }))
+                        .send()
+                        .await?
+                        .json::<serde_json::Value>()
+                        .await
+                })
+            });
 
-        let choices = res.get("choices").ok_or_else(|| anyhow!("Invalid response from OpenAI: {:?}", res))?;
-        let choice = choices.get(0).ok_or_else(|| anyhow!("No choices in response"))?;
-        let message = choice.get("message").ok_or_else(|| anyhow!("No message in choice"))?;
-        let content = message.get("content").ok_or_else(|| anyhow!("No content in message"))?;
+            match res {
+                Ok(res_val) => {
+                    let choices = res_val.get("choices").and_then(|c| c.get(0));
+                    if let Some(choice) = choices {
+                        if let Some(content) = choice.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()) {
+                            let cleaned = content.trim().to_string();
+                            if !cleaned.is_empty() {
+                                return Ok(cleaned);
+                            }
+                        }
+                    }
+                    last_err = Some(anyhow!("Invalid response from LLM: {:?}", res_val));
+                }
+                Err(e) => {
+                    last_err = Some(anyhow!("LLM call failed: {}", e));
+                }
+            }
+        }
 
-        Ok(content.as_str().unwrap_or_default().trim().to_string())
+        Err(last_err.unwrap_or_else(|| anyhow!("Failed to generate summary")))
     }
 }

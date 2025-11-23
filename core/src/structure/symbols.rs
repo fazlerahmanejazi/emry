@@ -1,7 +1,7 @@
 use crate::models::Language;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use anyhow::Result;
 use tree_sitter::{Parser, Query, QueryCursor};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,7 +36,13 @@ pub struct Symbol {
     pub file_path: PathBuf,
     pub start_line: usize,
     pub end_line: usize,
-    pub chunk_id: Option<String>, // Link to the main chunk if available
+    #[serde(default)]
+    pub fqn: String,
+    #[serde(default)]
+    pub visibility: Option<String>,
+    #[serde(default)]
+    pub chunk_ids: Vec<String>, // one or more chunks covering this symbol
+    pub chunk_id: Option<String>, // Link to the main chunk if available (legacy)
 }
 
 pub struct SymbolExtractor;
@@ -49,7 +55,9 @@ impl SymbolExtractor {
     ) -> Result<Vec<Symbol>> {
         match language {
             Language::Python => Self::extract_python(content, file_path),
-            Language::TypeScript | Language::JavaScript => Self::extract_typescript(content, file_path, language),
+            Language::TypeScript | Language::JavaScript => {
+                Self::extract_typescript(content, file_path, language)
+            }
             Language::Java => Self::extract_java(content, file_path),
             Language::Cpp => Self::extract_cpp(content, file_path),
             _ => Ok(Vec::new()),
@@ -61,19 +69,34 @@ impl SymbolExtractor {
         let language = tree_sitter_python::LANGUAGE;
         parser.set_language(&language.into())?;
 
-        let tree = parser.parse(content, None).ok_or_else(|| anyhow::anyhow!("Failed to parse Python"))?;
-        
+        let tree = parser
+            .parse(content, None)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse Python"))?;
+
         let query_str = "
             (function_definition name: (identifier) @name) @function
             (class_definition name: (identifier) @name) @class
         ";
-        
-        Self::run_query(content, file_path, Language::Python, tree.root_node(), &language.into(), query_str)
+
+        Self::run_query(
+            content,
+            file_path,
+            Language::Python,
+            tree.root_node(),
+            &language.into(),
+            query_str,
+        )
     }
 
-    fn extract_typescript(content: &str, file_path: &std::path::Path, language_enum: Language) -> Result<Vec<Symbol>> {
+    fn extract_typescript(
+        content: &str,
+        file_path: &std::path::Path,
+        language_enum: Language,
+    ) -> Result<Vec<Symbol>> {
         let mut parser = Parser::new();
-        let is_tsx = file_path.extension().map_or(false, |ext| ext == "tsx" || ext == "jsx");
+        let is_tsx = file_path
+            .extension()
+            .map_or(false, |ext| ext == "tsx" || ext == "jsx");
         let language = if is_tsx {
             tree_sitter_typescript::LANGUAGE_TSX
         } else {
@@ -81,7 +104,9 @@ impl SymbolExtractor {
         };
         parser.set_language(&language.into())?;
 
-        let tree = parser.parse(content, None).ok_or_else(|| anyhow::anyhow!("Failed to parse TS/JS"))?;
+        let tree = parser
+            .parse(content, None)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse TS/JS"))?;
 
         let query_str = "
             (function_declaration name: (identifier) @name) @function
@@ -91,7 +116,14 @@ impl SymbolExtractor {
             (public_field_definition name: (property_identifier) @name) @method
         ";
 
-        Self::run_query(content, file_path, language_enum, tree.root_node(), &language.into(), query_str)
+        Self::run_query(
+            content,
+            file_path,
+            language_enum,
+            tree.root_node(),
+            &language.into(),
+            query_str,
+        )
     }
 
     fn extract_java(content: &str, file_path: &std::path::Path) -> Result<Vec<Symbol>> {
@@ -99,7 +131,9 @@ impl SymbolExtractor {
         let language = tree_sitter_java::LANGUAGE;
         parser.set_language(&language.into())?;
 
-        let tree = parser.parse(content, None).ok_or_else(|| anyhow::anyhow!("Failed to parse Java"))?;
+        let tree = parser
+            .parse(content, None)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse Java"))?;
 
         let query_str = "
             (class_declaration name: (identifier) @name) @class
@@ -108,7 +142,14 @@ impl SymbolExtractor {
             (constructor_declaration name: (identifier) @name) @method
         ";
 
-        Self::run_query(content, file_path, Language::Java, tree.root_node(), &language.into(), query_str)
+        Self::run_query(
+            content,
+            file_path,
+            Language::Java,
+            tree.root_node(),
+            &language.into(),
+            query_str,
+        )
     }
 
     fn extract_cpp(content: &str, file_path: &std::path::Path) -> Result<Vec<Symbol>> {
@@ -116,7 +157,9 @@ impl SymbolExtractor {
         let language = tree_sitter_cpp::LANGUAGE;
         parser.set_language(&language.into())?;
 
-        let tree = parser.parse(content, None).ok_or_else(|| anyhow::anyhow!("Failed to parse C++"))?;
+        let tree = parser
+            .parse(content, None)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse C++"))?;
 
         // C++ is tricky with names (qualified names etc).
         // Simplified query for now.
@@ -126,7 +169,14 @@ impl SymbolExtractor {
             (function_definition declarator: (function_declarator declarator: (identifier) @name)) @function
         ";
 
-        Self::run_query(content, file_path, Language::Cpp, tree.root_node(), &language.into(), query_str)
+        Self::run_query(
+            content,
+            file_path,
+            Language::Cpp,
+            tree.root_node(),
+            &language.into(),
+            query_str,
+        )
     }
 
     fn run_query(
@@ -180,8 +230,9 @@ impl SymbolExtractor {
                 let name = name_n.utf8_text(content.as_bytes())?.to_string();
                 let start_line = def_n.start_position().row + 1;
                 let end_line = def_n.end_position().row + 1;
-                
+
                 let id = format!("{}:{}:{}", file_path.to_string_lossy(), name, start_line);
+                let fqn = build_fqn(file_path, &name);
 
                 symbols.push(Symbol {
                     id,
@@ -191,6 +242,9 @@ impl SymbolExtractor {
                     file_path: file_path.to_path_buf(),
                     start_line,
                     end_line,
+                    fqn,
+                    visibility: None,
+                    chunk_ids: Vec::new(),
                     chunk_id: None,
                 });
             }
@@ -198,4 +252,24 @@ impl SymbolExtractor {
 
         Ok(symbols)
     }
+}
+
+fn build_fqn(file_path: &std::path::Path, name: &str) -> String {
+    let mut parts = Vec::new();
+    if let Some(parent) = file_path.parent() {
+        if let Some(parent_str) = parent.to_str() {
+            if !parent_str.is_empty() {
+                parts.push(parent_str.replace(std::path::MAIN_SEPARATOR, "::"));
+            }
+        }
+    }
+    if let Some(stem) = file_path.file_stem().and_then(|s| s.to_str()) {
+        parts.push(stem.to_string());
+    }
+    parts.push(name.to_string());
+    parts
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("::")
 }

@@ -1,12 +1,12 @@
-use crate::structure::graph::{CodeGraph, NodeId, NodeType};
 use crate::models::Chunk;
+use crate::structure::graph::{CodeGraph, NodeId, NodeType};
 use std::collections::HashSet;
 
 pub struct SeedSelector;
 
 impl SeedSelector {
     /// Selects seed nodes for path traversal based on retrieval results.
-    /// 
+    ///
     /// Strategy:
     /// 1. Map top-ranked chunks to their corresponding Graph Nodes (Functions/Classes).
     /// 2. If a chunk is inside a function, pick that function.
@@ -24,7 +24,7 @@ impl SeedSelector {
             // Find nodes that overlap with this chunk
             // This is a naive O(N) search over nodes. In prod, we'd use an interval tree or the symbol index.
             // For now, we iterate graph nodes matching the file.
-            
+
             let mut best_node: Option<&NodeId> = None;
             let mut best_overlap = 0;
 
@@ -34,7 +34,7 @@ impl SeedSelector {
                         // Check overlap
                         let start = std::cmp::max(node.start_line, chunk.start_line);
                         let end = std::cmp::min(node.end_line, chunk.end_line);
-                        
+
                         if start <= end {
                             let overlap = end - start + 1;
                             // Prefer functions over classes/files for flow starting points
@@ -44,7 +44,7 @@ impl SeedSelector {
                                 _ => 0,
                             };
                             let score = overlap + type_bonus;
-                            
+
                             if score > best_overlap {
                                 best_overlap = score;
                                 best_node = Some(&node.id);
@@ -60,7 +60,7 @@ impl SeedSelector {
                 }
             }
         }
-        
+
         result
     }
 }

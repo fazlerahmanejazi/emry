@@ -1,0 +1,24 @@
+{
+  "config": "smoke",
+  "datasets": [
+    "cosqa"
+  ],
+  "num_queries": 10,
+  "duration_sec": 0.0016179084777832031,
+  "metrics": {
+    "ndcg@5": 0.0,
+    "ndcg@10": 0.0,
+    "recall@5": 0.0,
+    "recall@10": 0.0,
+    "precision@5": 0.0,
+    "precision@10": 0.0,
+    "map": 0.0,
+    "mrr": 0.0,
+    "p50_latency": 0.004410743713378906,
+    "p95_latency": 0.007903575897216793,
+    "p99_latency": 0.00901937484741211,
+    "avg_latency": 0.005030632019042969
+  },
+  "run_id": "2025-11-23_014339",
+  "timestamp": "2025-11-23T01:43:39.123874"
+}

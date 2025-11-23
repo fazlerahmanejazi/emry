@@ -11,7 +11,8 @@ pub struct OllamaEmbedder {
 impl OllamaEmbedder {
     pub fn new(model: Option<String>) -> Result<Self> {
         let model_name = model.unwrap_or_else(|| "nomic-embed-text".to_string());
-        let base = std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+        let base = std::env::var("OLLAMA_BASE_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
         Ok(Self {
             client: Client::builder().build()?,
             model: model_name,
@@ -26,14 +27,17 @@ impl Embedder for OllamaEmbedder {
         let runtime = tokio::runtime::Handle::try_current()
             .ok()
             .or_else(|| {
-                tokio::runtime::Runtime::new().ok().map(|rt| rt.handle().clone())
+                tokio::runtime::Runtime::new()
+                    .ok()
+                    .map(|rt| rt.handle().clone())
             })
             .ok_or_else(|| anyhow!("No tokio runtime available"))?;
-        
+
         runtime.block_on(async {
             let mut out = Vec::with_capacity(texts.len());
             for t in texts {
-                let resp = self.client
+                let resp = self
+                    .client
                     .post(format!("{}/api/embeddings", self.base_url))
                     .json(&serde_json::json!({
                         "model": self.model,

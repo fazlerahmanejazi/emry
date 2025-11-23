@@ -2,8 +2,8 @@ pub mod builder;
 pub mod scorer;
 pub mod selector;
 
+use crate::structure::graph::{EdgeType, NodeType};
 use serde::{Deserialize, Serialize};
-use crate::structure::graph::{NodeType, EdgeType};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathNode {
@@ -33,7 +33,11 @@ pub struct Path {
 impl Path {
     pub fn new(nodes: Vec<PathNode>, edges: Vec<PathEdge>) -> Self {
         // Simple ID generation
-        let id = format!("path_{}_{}", nodes.first().map(|n| n.node_id.as_str()).unwrap_or(""), nodes.len()); 
+        let id = format!(
+            "path_{}_{}",
+            nodes.first().map(|n| n.node_id.as_str()).unwrap_or(""),
+            nodes.len()
+        );
         Self {
             id,
             nodes,

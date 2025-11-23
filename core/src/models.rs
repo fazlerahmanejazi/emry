@@ -94,6 +94,10 @@ pub struct Chunk {
     pub content_hash: String,
     pub content: String,
     pub embedding: Option<Vec<f32>>, // Optional for now, populated later
+    #[serde(default)]
+    pub parent_scope: Option<String>, // e.g., "class Foo"
+    #[serde(default)]
+    pub scope_path: Vec<String>, // ancestors, outermost -> innermost
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

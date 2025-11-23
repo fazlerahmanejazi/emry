@@ -38,7 +38,7 @@ impl<'a> FeatureExtractor<'a> {
         vector_score: f32,
     ) -> Features {
         let exact_match = if content.contains(query) { 1.0 } else { 0.0 };
-        
+
         let mut symbol_match = 0.0;
         if let Some(index) = self.symbol_index {
             // Check if query matches any symbol name exactly

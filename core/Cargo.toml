@@ -38,3 +38,5 @@ rayon = { workspace = true }
 itertools = { workspace = true }
 tiktoken-rs = "0.5"
 text-splitter = { version = "0.17", features = ["tiktoken-rs"] }
+sled = "0.34.7"
+async-trait = "0.1.89"

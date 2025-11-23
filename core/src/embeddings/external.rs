@@ -14,7 +14,7 @@ impl ExternalEmbedder {
     pub fn new(model: Option<String>) -> Result<Self> {
         let api_key = env::var("OPENAI_API_KEY")
             .map_err(|_| anyhow!("OPENAI_API_KEY environment variable not set"))?;
-        
+
         Ok(Self {
             client: reqwest::Client::new(),
             api_key,
@@ -42,15 +42,22 @@ impl Embedder for ExternalEmbedder {
                     .json::<serde_json::Value>()
                     .await
             })
-        }).map_err(|e| anyhow!("Failed to call OpenAI API: {}", e))?;
+        })
+        .map_err(|e| anyhow!("Failed to call OpenAI API: {}", e))?;
 
         // Parse response
-        let data = res.get("data").ok_or_else(|| anyhow!("Invalid response from OpenAI: {:?}", res))?;
-        let data_array = data.as_array().ok_or_else(|| anyhow!("Expected data array"))?;
-        
+        let data = res
+            .get("data")
+            .ok_or_else(|| anyhow!("Invalid response from OpenAI: {:?}", res))?;
+        let data_array = data
+            .as_array()
+            .ok_or_else(|| anyhow!("Expected data array"))?;
+
         let mut embeddings = Vec::new();
         for item in data_array {
-            let emb_val = item.get("embedding").ok_or_else(|| anyhow!("Missing embedding field"))?;
+            let emb_val = item
+                .get("embedding")
+                .ok_or_else(|| anyhow!("Missing embedding field"))?;
             let emb_vec: Vec<f32> = serde_json::from_value(emb_val.clone())?;
             embeddings.push(emb_vec);
         }

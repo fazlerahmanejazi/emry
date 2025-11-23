@@ -1,0 +1,10 @@
+{"query_id": "mock_0", "query": "Sample query 0", "dataset": "mock", "latency_ms": 0.008821487426757812, "relevances": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:11.321554"}
+{"query_id": "mock_1", "query": "Sample query 1", "dataset": "mock", "latency_ms": 0.00476837158203125, "relevances": [0, 1, 0, 0, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:11.321762"}
+{"query_id": "mock_2", "query": "Sample query 2", "dataset": "mock", "latency_ms": 0.009059906005859375, "relevances": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:11.322042"}
+{"query_id": "mock_3", "query": "Sample query 3", "dataset": "mock", "latency_ms": 0.0057220458984375, "relevances": [0, 0, 0, 1, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:11.322130"}
+{"query_id": "mock_4", "query": "Sample query 4", "dataset": "mock", "latency_ms": 0.0059604644775390625, "relevances": [0, 0, 0, 0, 1, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:11.322198"}
+{"query_id": "mock_5", "query": "Sample query 5", "dataset": "mock", "latency_ms": 0.003814697265625, "relevances": [0, 0, 0, 0, 0, 1, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:11.322261"}
+{"query_id": "mock_6", "query": "Sample query 6", "dataset": "mock", "latency_ms": 0.0040531158447265625, "relevances": [0, 0, 0, 0, 0, 0, 1, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:11.322309"}
+{"query_id": "mock_7", "query": "Sample query 7", "dataset": "mock", "latency_ms": 0.003814697265625, "relevances": [0, 0, 0, 0, 0, 0, 0, 1, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:11.322357"}
+{"query_id": "mock_8", "query": "Sample query 8", "dataset": "mock", "latency_ms": 0.0040531158447265625, "relevances": [0, 0, 0, 0, 0, 0, 0, 0, 1, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:11.322404"}
+{"query_id": "mock_9", "query": "Sample query 9", "dataset": "mock", "latency_ms": 0.003814697265625, "relevances": [0, 0, 0, 0, 0, 0, 0, 0, 0, 1], "num_relevant": 1, "timestamp": "2025-11-23T01:31:11.322451"}

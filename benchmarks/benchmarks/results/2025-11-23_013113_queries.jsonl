@@ -1,0 +1,10 @@
+{"query_id": "mock_0", "query": "Sample query 0", "dataset": "mock", "latency_ms": 0.010728836059570312, "relevances": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:13.830591"}
+{"query_id": "mock_1", "query": "Sample query 1", "dataset": "mock", "latency_ms": 0.00476837158203125, "relevances": [0, 1, 0, 0, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:13.830807"}
+{"query_id": "mock_2", "query": "Sample query 2", "dataset": "mock", "latency_ms": 0.014066696166992188, "relevances": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:13.831054"}
+{"query_id": "mock_3", "query": "Sample query 3", "dataset": "mock", "latency_ms": 0.0050067901611328125, "relevances": [0, 0, 0, 1, 0, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:13.831129"}
+{"query_id": "mock_4", "query": "Sample query 4", "dataset": "mock", "latency_ms": 0.0040531158447265625, "relevances": [0, 0, 0, 0, 1, 0, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:13.831184"}
+{"query_id": "mock_5", "query": "Sample query 5", "dataset": "mock", "latency_ms": 0.00476837158203125, "relevances": [0, 0, 0, 0, 0, 1, 0, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:13.831232"}
+{"query_id": "mock_6", "query": "Sample query 6", "dataset": "mock", "latency_ms": 0.0040531158447265625, "relevances": [0, 0, 0, 0, 0, 0, 1, 0, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:13.831278"}
+{"query_id": "mock_7", "query": "Sample query 7", "dataset": "mock", "latency_ms": 0.0040531158447265625, "relevances": [0, 0, 0, 0, 0, 0, 0, 1, 0, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:13.831322"}
+{"query_id": "mock_8", "query": "Sample query 8", "dataset": "mock", "latency_ms": 0.0040531158447265625, "relevances": [0, 0, 0, 0, 0, 0, 0, 0, 1, 0], "num_relevant": 1, "timestamp": "2025-11-23T01:31:13.831365"}
+{"query_id": "mock_9", "query": "Sample query 9", "dataset": "mock", "latency_ms": 0.0040531158447265625, "relevances": [0, 0, 0, 0, 0, 0, 0, 0, 0, 1], "num_relevant": 1, "timestamp": "2025-11-23T01:31:13.831408"}
