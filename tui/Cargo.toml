@@ -5,7 +5,16 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
-coderet-core = { path = "../core" }
+coderet-agent = { path = "../crates/coderet-agent" }
+coderet-config = { path = "../crates/coderet-config" }
+coderet-core = { path = "../crates/coderet-core" }
+coderet-graph = { path = "../crates/coderet-graph" }
+coderet-index = { path = "../crates/coderet-index" }
+coderet-store = { path = "../crates/coderet-store" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 tokio = { workspace = true }
+globset = { workspace = true }
+reqwest = { workspace = true, features = ["json", "blocking"] }
+serde_json = { workspace = true }
+sled = "0.34"

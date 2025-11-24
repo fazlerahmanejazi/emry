@@ -1,0 +1,27 @@
+[package]
+name = "coderet-index"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+coderet-core = { path = "../coderet-core" }
+coderet-store = { path = "../coderet-store" }
+coderet-graph = { path = "../coderet-graph" }
+coderet-config = { path = "../coderet-config" }
+tantivy = { workspace = true }
+lance = { workspace = true }
+arrow = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+ignore = { workspace = true }
+tree-sitter = { workspace = true }
+serde_json = { workspace = true }
+sled = "0.34"
+
+[dev-dependencies]
+tempfile = "3"
+async-trait = "0.1"

@@ -1,249 +1,176 @@
-use coderet_core::config::Config;
-use coderet_core::agent::brain::{Agent, AgentOptions};
-use coderet_core::agent::llm::LLMClient;
-use coderet_core::agent::tools::{ToolRegistry, SearchTool, PathTool, ReadCodeTool, GrepTool, SymbolTool, ReferencesTool, ListDirTool, SummaryTool};
-use coderet_core::index::lexical::LexicalIndex;
-use coderet_core::index::vector::VectorIndex;
-use coderet_core::structure::index::SymbolIndex;
-use coderet_core::structure::graph::CodeGraph;
-use coderet_core::retriever::Retriever;
-use coderet_core::ranking::model::{Ranker, LinearRanker};
-use coderet_core::summaries::index::SummaryIndex;
-use coderet_core::summaries::vector::SummaryVectorIndex;
-use std::path::PathBuf;
-use std::process::Command;
-use std::sync::Arc;
-
-pub enum InputMode {
-    Normal,
-    Editing,
-}
+use anyhow::Result;
+use crossterm::event::{self, Event, KeyCode};
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct Message {
-    pub role: String, // "user", "agent", "system"
+    pub role: String,
     pub content: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    Search,
+    Agent,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AgentStatus {
+    Idle,
+    Planning,
+    Executing,
+    Synthesizing,
+    Done,
+    Error,
 }
 
 pub struct App {
     pub input: String,
-    pub input_mode: InputMode,
     pub messages: Vec<Message>,
-    pub agent: Option<Agent>,
-    pub status_message: String,
-    pub scroll_offset: usize,
+    pub status: String,
+    pub mode: AppMode,
+    // Agent-specific fields
+    pub agent_plan: Option<String>,
+    pub agent_observations: Vec<String>,
+    pub agent_answer: Option<String>,
+    pub agent_status: AgentStatus,
 }
 
 impl App {
-    pub fn new() -> App {
-        App {
+    pub fn new() -> Self {
+        Self {
             input: String::new(),
-            input_mode: InputMode::Normal,
-            messages: vec![
-                Message {
-                    role: "system".to_string(),
-                    content: "Agent TUI - Press 'a' to ask a question, 'q' to quit.".to_string(),
-                }
-            ],
-            agent: None,
-            status_message: "Initializing...".to_string(),
-            scroll_offset: 0,
+            messages: vec![Message {
+                role: "system".to_string(),
+                content: "Type a query and press Enter. Press 'a' for agent mode, 's' for search mode. Press 'q' to quit.".to_string(),
+            }],
+            status: "Ready (Search Mode)".to_string(),
+            mode: AppMode::Search,
+            agent_plan: None,
+            agent_observations: Vec::new(),
+            agent_answer: None,
+            agent_status: AgentStatus::Idle,
         }
     }
 
-    pub fn on_key(&mut self, c: char) {
-        match self.input_mode {
-            InputMode::Normal => {
-                match c {
-                    'a' => {
-                        self.input_mode = InputMode::Editing;
-                        self.status_message = "Enter your question...".to_string();
-                    }
-                    'j' => self.scroll_down(),
-                    'k' => self.scroll_up(),
-                    _ => {}
-                }
+    pub fn toggle_to_agent(&mut self) {
+        self.mode = AppMode::Agent;
+        self.status = "Ready (Agent Mode)".to_string();
+        self.messages.push(Message {
+            role: "system".to_string(),
+            content:
+                "Switched to Agent mode. Agent will plan, execute tools, and synthesize answers."
+                    .to_string(),
+        });
+    }
+
+    pub fn toggle_to_search(&mut self) {
+        self.mode = AppMode::Search;
+        self.status = "Ready (Search Mode)".to_string();
+        self.messages.push(Message {
+            role: "system".to_string(),
+            content: "Switched to Search mode. Direct search results will be displayed."
+                .to_string(),
+        });
+    }
+
+    pub fn on_key(&mut self, code: KeyCode) -> Option<String> {
+        match code {
+            KeyCode::Char('q') => {
+                return Some("__quit__".to_string());
             }
-            InputMode::Editing => {
-                // Handled in on_char
+            KeyCode::Char('a') => {
+                self.toggle_to_agent();
+                return None;
             }
-        }
-    }
-
-    pub fn on_char(&mut self, c: char) {
-        if let InputMode::Editing = self.input_mode {
-            self.input.push(c);
-        }
-    }
-
-    pub fn on_backspace(&mut self) {
-        if let InputMode::Editing = self.input_mode {
-            self.input.pop();
-        }
-    }
-
-    pub fn on_esc(&mut self) {
-        self.input_mode = InputMode::Normal;
-        self.input.clear();
-        self.status_message = "Normal mode.".to_string();
-    }
-
-    pub fn on_up(&mut self) {
-        if let InputMode::Normal = self.input_mode {
-            self.scroll_up();
-        }
-    }
-
-    pub fn on_down(&mut self) {
-        if let InputMode::Normal = self.input_mode {
-            self.scroll_down();
-        }
-    }
-
-    fn scroll_up(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(1);
-    }
-
-    fn scroll_down(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_add(1);
-    }
-
-    pub async fn on_enter(&mut self) {
-        if let InputMode::Editing = self.input_mode {
-            self.input_mode = InputMode::Normal;
-            let query = self.input.clone();
-            self.input.clear();
-            
-            if query.trim().is_empty() {
-                self.status_message = "Query cannot be empty".to_string();
-                return;
+            KeyCode::Char('s') => {
+                self.toggle_to_search();
+                return None;
             }
-
-            // Add user message
-            self.messages.push(Message {
-                role: "user".to_string(),
-                content: query.clone(),
-            });
-
-            self.status_message = "Agent is thinking...".to_string();
-            
-            // Initialize agent if needed
-            if self.agent.is_none() {
-                if let Err(e) = self.initialize_agent().await {
+            KeyCode::Enter => {
+                let q = self.input.trim().to_string();
+                self.input.clear();
+                if !q.is_empty() {
                     self.messages.push(Message {
-                        role: "system".to_string(),
-                        content: format!("Error initializing agent: {}", e),
+                        role: "user".to_string(),
+                        content: q.clone(),
                     });
-                    self.status_message = "Error initializing agent".to_string();
-                    return;
+                    match self.mode {
+                        AppMode::Search => {
+                            self.status = "Searching...".to_string();
+                        }
+                        AppMode::Agent => {
+                            self.status = "Planning...".to_string();
+                            self.agent_status = AgentStatus::Planning;
+                            self.agent_plan = None;
+                            self.agent_observations.clear();
+                            self.agent_answer = None;
+                        }
+                    }
+                    return Some(q);
                 }
             }
-
-            // Ask agent
-            if let Some(agent) = &self.agent {
-                match agent.ask(&query, AgentOptions::default()).await {
-                    Ok(answer) => {
-                        self.messages.push(Message {
-                            role: "agent".to_string(),
-                            content: answer,
-                        });
-                        self.status_message = "Ready".to_string();
-                    }
-                    Err(e) => {
-                        self.messages.push(Message {
-                            role: "system".to_string(),
-                            content: format!("Error: {}", e),
-                        });
-                        self.status_message = "Error".to_string();
-                    }
-                }
+            KeyCode::Backspace => {
+                self.input.pop();
             }
-        }
-    }
-
-    async fn initialize_agent(&mut self) -> anyhow::Result<()> {
-        let branch = current_branch().unwrap_or_else(|| "default".to_string());
-        let index_dir = PathBuf::from(".codeindex").join("branches").join(branch);
-        
-        if !index_dir.exists() {
-            return Err(anyhow::anyhow!("Index not found. Run 'coderet index' first."));
-        }
-
-        let config = Config::load().unwrap_or_default();
-
-        // Initialize components
-        let lexical_index = Arc::new(LexicalIndex::new(&index_dir.join("lexical"))?);
-        let vector_index = Arc::new(VectorIndex::new(&index_dir.join("vector.lance")).await?);
-        
-        let embedder = crate::embeddings_util::select_embedder(&config.embeddings)
-            .ok_or_else(|| anyhow::anyhow!("No suitable embedder found."))?;
-
-        let symbol_index = SymbolIndex::load(&index_dir.join("symbols.json")).ok().map(Arc::new);
-        let graph = CodeGraph::load(&index_dir.join("graph.json")).ok().map(Arc::new);
-        let summary_index = SummaryIndex::load(&index_dir.join("summaries.json")).ok().map(Arc::new);
-        let summary_vector = SummaryVectorIndex::new(&index_dir.join("summary.lance")).await.ok();
-        let ranker: Option<Box<dyn Ranker + Send + Sync>> = Some(Box::new(LinearRanker::default()));
-
-        let retriever = Arc::new(Retriever::new(
-            lexical_index,
-            vector_index,
-            embedder,
-            symbol_index.clone(),
-            summary_index.clone(),
-            graph.clone(),
-            ranker,
-            summary_vector,
-        ));
-
-        // Setup Tools
-        let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(SearchTool::new(retriever)));
-        registry.register(Arc::new(ReadCodeTool::new()));
-        registry.register(Arc::new(GrepTool::new()));
-        registry.register(Arc::new(ReferencesTool::new()));
-        registry.register(Arc::new(ListDirTool::new()));
-        if let Some(sum) = summary_index {
-            registry.register(Arc::new(SummaryTool::new(sum)));
-        }
-        
-        if let Some(idx) = symbol_index {
-            registry.register(Arc::new(SymbolTool::new(idx)));
-        }
-        
-        if let Some(g) = graph {
-            registry.register(Arc::new(PathTool::new(g)));
-        }
-
-        // Setup Agent
-        let llm = LLMClient::new(None)?;
-        let agent = Agent::new(llm, registry);
-        
-        self.agent = Some(agent);
-        self.status_message = "Agent initialized".to_string();
-        
-        Ok(())
-    }
-}
-
-fn current_branch() -> Option<String> {
-    if let Ok(output) = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-    {
-        if output.status.success() {
-            let mut name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if name == "HEAD" {
-                if let Ok(out2) = Command::new("git")
-                    .args(["rev-parse", "--short", "HEAD"])
-                    .output()
-                {
-                    if out2.status.success() {
-                        name = format!("detached_{}", String::from_utf8_lossy(&out2.stdout).trim());
-                    }
-                }
+            KeyCode::Char(c) => {
+                self.input.push(c);
             }
-            return Some(name.replace('/', "__").replace(' ', "_"));
+            _ => {}
+        }
+        None
+    }
+
+    pub fn on_agent_plan(&mut self, plan: String) {
+        self.agent_plan = Some(plan.clone());
+        self.agent_status = AgentStatus::Executing;
+        self.status = "Executing plan...".to_string();
+    }
+
+    pub fn on_agent_observation(&mut self, obs: String) {
+        self.agent_observations.push(obs);
+    }
+
+    pub fn on_agent_synthesizing(&mut self) {
+        self.agent_status = AgentStatus::Synthesizing;
+        self.status = "Synthesizing answer...".to_string();
+    }
+
+    pub fn on_agent_result(&mut self, answer: String) {
+        self.agent_answer = Some(answer.clone());
+        self.agent_status = AgentStatus::Done;
+        self.messages.push(Message {
+            role: "agent".to_string(),
+            content: answer,
+        });
+        self.status = "Done (Agent Mode)".to_string();
+    }
+
+    pub fn on_result(&mut self, content: String) {
+        self.messages.push(Message {
+            role: "agent".to_string(),
+            content,
+        });
+        self.status = match self.mode {
+            AppMode::Search => "Ready (Search Mode)".to_string(),
+            AppMode::Agent => "Ready (Agent Mode)".to_string(),
+        };
+    }
+
+    pub fn on_error(&mut self, err: String) {
+        self.messages.push(Message {
+            role: "system".to_string(),
+            content: err,
+        });
+        self.agent_status = AgentStatus::Error;
+        self.status = "Error".to_string();
+    }
+
+    pub fn poll_event(timeout: Duration) -> Result<Option<Event>> {
+        if event::poll(timeout)? {
+            Ok(Some(event::read()?))
+        } else {
+            Ok(None)
         }
     }
-    None
 }

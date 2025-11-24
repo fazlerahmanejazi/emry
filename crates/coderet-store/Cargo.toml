@@ -1,0 +1,13 @@
+[package]
+name = "coderet-store"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+coderet-core = { path = "../coderet-core" }
+sled = "0.34"
+serde = { workspace = true }
+anyhow = { workspace = true }
+bincode = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

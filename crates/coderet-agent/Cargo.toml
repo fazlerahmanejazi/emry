@@ -1,0 +1,22 @@
+[package]
+name = "coderet-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+coderet-core = { path = "../coderet-core" }
+coderet-index = { path = "../coderet-index" }
+coderet-store = { path = "../coderet-store" }
+coderet-graph = { path = "../coderet-graph" }
+coderet-config = { path = "../coderet-config" }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+async-trait = "0.1"
+sled = "0.34"
+globset = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

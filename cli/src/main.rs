@@ -2,24 +2,21 @@ mod commands;
 
 use anyhow::Result;
 use clap::Parser;
-use commands::{handle_ask, handle_index, handle_search, Cli, Commands};
+use commands::{Cli, Commands};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .init();
+
     let exit_code = match cli.command {
-        Commands::Index { full, summarize, summarize_levels, summarize_model, summarize_max_tokens, summarize_prompt_version } => {
-            match handle_index(
-                full,
-                summarize,
-                summarize_levels,
-                summarize_model,
-                summarize_max_tokens,
-                summarize_prompt_version,
-                cli.config.as_deref(),
-            )
-            .await {
+        Commands::Index { full } => {
+            match commands::handle_index(full, cli.config.as_deref()).await {
                 Ok(_) => 0,
                 Err(e) => {
                     eprintln!("Index failed: {}", e);
@@ -29,60 +26,53 @@ async fn main() -> Result<()> {
         }
         Commands::Search {
             query,
-            mode,
             top,
+            mode,
             lang,
             path,
-            tui,
             symbol,
             summary,
-            paths,
             regex,
             no_ignore,
-            explain,
-            with_summaries,
-        } => {
-            eprintln!("DEBUG: main calling handle_search");
-            match handle_search(
-                query,
-                mode,
-                top,
-                lang,
-                path,
-                tui,
-                symbol,
-                summary,
-                paths,
-                regex,
-                no_ignore,
-                explain,
-                with_summaries,
-                cli.config.as_deref(),
-            )
-            .await
-            {
-                Ok(_) => 0,
-                Err(e) => {
-                    eprintln!("Search failed: {}", e);
-                    1
-                }
+        } => match commands::handle_search(
+            query,
+            cli.config.as_deref(),
+            top,
+            mode,
+            lang,
+            path,
+            symbol,
+            summary,
+            regex,
+            no_ignore,
+        )
+        .await
+        {
+            Ok(_) => 0,
+            Err(e) => {
+                eprintln!("Search failed: {}", e);
+                1
             }
-        }
+        },
         Commands::Ask {
             query,
-            mode,
             depth,
-            with_summaries,
-            use_graph,
-            use_symbols,
+            agent,
+            output,
+            json,
+            max_per_step,
+            max_observations,
+            max_tokens,
         } => {
-            match handle_ask(
+            match commands::handle_ask(
                 query,
-                mode,
                 depth,
-                with_summaries,
-                use_graph,
-                use_symbols,
+                agent,
+                output,
+                json,
+                max_per_step,
+                max_observations,
+                max_tokens,
                 cli.config.as_deref(),
             )
             .await

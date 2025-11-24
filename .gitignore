@@ -9,3 +9,5 @@ Cargo.lock
 *.swo
 target/
 specs/
+/benchmarks
+/core

@@ -1,0 +1,13 @@
+[package]
+name = "coderet-graph"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+coderet-core = { path = "../coderet-core" }
+coderet-store = { path = "../coderet-store" }
+sled = "0.34"
+serde = { workspace = true }
+bincode = { workspace = true }
+anyhow = { workspace = true }
+petgraph = { workspace = true } # We might still use petgraph algorithms on top of sled
