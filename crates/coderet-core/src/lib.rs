@@ -6,6 +6,7 @@ pub mod relations;
 pub mod scanner;
 pub mod summaries;
 pub mod symbols;
+pub mod tags_extractor;
 pub mod traits;
 
 #[cfg(test)]

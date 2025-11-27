@@ -13,6 +13,7 @@ coderet-graph = { path = "../crates/coderet-graph" }
 coderet-index = { path = "../crates/coderet-index" }
 coderet-store = { path = "../crates/coderet-store" }
 coderet-pipeline = { path = "../crates/coderet-pipeline" }
+coderet-tools = { path = "../crates/coderet-tools" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 tokio = { workspace = true }

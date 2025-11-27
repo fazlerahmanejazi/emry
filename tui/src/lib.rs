@@ -28,12 +28,24 @@ use coderet_store::chunk_store::ChunkStore;
 use coderet_store::file_store::FileStore;
 use coderet_store::relation_store::RelationStore;
 use coderet_store::storage::Store;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
 
 // Agent imports
-use coderet_agent::agent_loop::AgentLoop;
+use coderet_agent::cortex::Cortex;
+use coderet_agent::cortex::context::AgentContext;
+use coderet_agent::cortex::tools::{
+    fs::{ListFilesTool, ReadFileTool},
+    graph::{InspectGraphTool, ResolveEntityTool},
+    search::SearchCodeTool,
+};
+use coderet_agent::llm::OpenAIProvider;
 use coderet_context::RepoContext;
+use coderet_tools::{
+    fs::FsTool,
+    graph::GraphTool,
+    search::Search,
+};
 
 pub async fn run_tui() -> Result<()> {
     // Initialize index manager once
@@ -50,7 +62,10 @@ pub async fn run_tui() -> Result<()> {
     let file_store = Arc::new(FileStore::new(store.clone())?);
     let chunk_store = Arc::new(ChunkStore::new(store.clone())?);
     let relation_store = Arc::new(RelationStore::new(store.clone())?);
-    let graph = Arc::new(CodeGraph::new(store.clone())?);
+    
+    let graph_path = index_dir.join("graph.bin");
+    let graph = Arc::new(RwLock::new(CodeGraph::load(&graph_path)?));
+    
     let content_store = Arc::new(coderet_store::content_store::ContentStore::new(store.clone())?);
     let file_blob_store = Arc::new(coderet_store::file_blob_store::FileBlobStore::new(
         store.clone(),
@@ -114,8 +129,9 @@ pub async fn run_tui() -> Result<()> {
                             });
                         }
                         AppMode::Agent => {
+                            let manager = manager.clone();
                             tokio::spawn(async move {
-                                let res = handle_agent_query(&query).await;
+                                let res = handle_agent_query(&query, manager).await;
                                 let _ = tx.send(res);
                             });
                         }
@@ -176,48 +192,55 @@ async fn handle_query(
     Ok(out)
 }
 
-async fn handle_agent_query(query: &str) -> Result<String> {
-    // Initialize agent
+async fn handle_agent_query(query: &str, manager: Arc<IndexManager>) -> Result<String> {
+    // Initialize Context
     let ctx = Arc::new(RepoContext::from_env(None).await?);
     
-    let index_dir = ctx.index_dir.clone();
-    let manager = Arc::new(IndexManager::new(
-        Arc::new(LexicalIndex::new(&index_dir.join("lexical"))?),
-        Arc::new(Mutex::new(VectorIndex::new(&index_dir.join("vector.lance")).await?)),
-        ctx.embedder.clone(),
-        ctx.file_store.clone(),
-        ctx.chunk_store.clone(),
-        ctx.content_store.clone(),
-        ctx.file_blob_store.clone(),
-        ctx.relation_store.clone(),
-        ctx.graph.clone(),
-        Some(ctx.summary_index.clone()),
+    // Initialize Tools
+    let search_tool = Arc::new(Search::new(
+        ctx.clone(),
+        manager.clone(),
     ));
+    let graph_tool = Arc::new(GraphTool::new(ctx.clone()));
+    let fs_tool = Arc::new(FsTool::new(ctx.clone()));
 
-    let agent = AgentLoop::new(ctx.clone(), manager)?;
+    // Setup Agent Context
+    let config = coderet_config::Config::load().unwrap_or_default();
+    let mut agent_ctx = AgentContext::new(ctx.clone(), manager.clone(), config.agent.clone());
 
-    // Execute agent query
-    let result = agent.run(query, false).await?;
+    // Register Tools
+    agent_ctx.register_tool(Arc::new(SearchCodeTool::new(search_tool.clone())));
+    agent_ctx.register_tool(Arc::new(InspectGraphTool::new(graph_tool.clone())));
+    agent_ctx.register_tool(Arc::new(ResolveEntityTool::new(ctx.clone(), search_tool.clone())));
+    agent_ctx.register_tool(Arc::new(ReadFileTool::new(fs_tool.clone())));
+    agent_ctx.register_tool(Arc::new(ListFilesTool::new(fs_tool.clone())));
 
-    // Format result
+    // Initialize LLM
+    let api_key = std::env::var("OPENAI_API_KEY").map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set"))?;
+    let llm = OpenAIProvider::new(config.llm.model.clone(), api_key, config.llm.timeout_secs)?;
+
+    // Create Cortex
+    let mut cortex = Cortex::new(agent_ctx, llm);
+
+    // Run Agent
+    let final_answer = cortex.run(query).await?;
+
+    // Format Output
     let mut out = String::new();
-    out.push_str(&format!("\n=== Agent Answer ===\n{}\n", result.final_answer));
+    out.push_str(&format!("\n=== Agent Answer ===\n{}\n", final_answer));
 
     out.push_str("\n=== Trace ===\n");
-    for (i, turn) in result.turns.iter().enumerate() {
-        out.push_str(&format!("{}. Thought: {}\n", i + 1, turn.thought));
-        if let Some(tool) = &turn.tool_call {
-            out.push_str(&format!("   Action: {} {:?}\n", tool.tool_name, tool.args));
-        }
-        if let Some(obs) = &turn.observation {
-            let snippet = if obs.len() > 100 {
-                format!("{}\
-...", &obs[..100])
-            } else {
-                obs.clone()
-            };
-            out.push_str(&format!("   Observation: {}\n", snippet));
-        }
+    for step in &cortex.ctx.history {
+        out.push_str(&format!("Step {}:\n", step.step_id));
+        out.push_str(&format!("  Thought: {}\n", step.thought));
+        out.push_str(&format!("  Action: {} {}\n", step.action, step.args));
+        
+        let snippet = if step.observation.len() > 200 {
+            format!("{}...", &step.observation[..200].replace('\n', " "))
+        } else {
+            step.observation.replace('\n', " ")
+        };
+        out.push_str(&format!("  Observation: {}\n\n", snippet));
     }
 
     Ok(out)

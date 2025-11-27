@@ -173,10 +173,6 @@ fn prepare_file(
                 }
             })
             .unwrap_or(source_chunk.clone());
-        println!(
-            "DEBUG(prepare_file): Processing call: name='{}', line={}, source_chunk='{}', caller_node='{}'",
-            c.name, c.line, source_chunk, caller_node
-        );
         call_edges.push((caller_node, c.name));
     }
     for imp in imports {

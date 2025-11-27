@@ -18,6 +18,7 @@ coderet-pipeline = { path = "../crates/coderet-pipeline" }
 coderet-context = { path = "../crates/coderet-context" }
 coderet-store = { path = "../crates/coderet-store" }
 coderet-graph = { path = "../crates/coderet-graph" }
+coderet-tools = { path = "../crates/coderet-tools" }
 tui = { path = "../tui" }
 tokio = { workspace = true }
 walkdir = "2.4"

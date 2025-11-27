@@ -34,7 +34,8 @@ impl Search {
 
         let mut symbols = Vec::new();
         // Additionally search for exact symbol matches
-        if let Ok(nodes) = self.ctx.graph.nodes_matching_label(query) {
+        let graph = self.ctx.graph.read().unwrap();
+        if let Ok(nodes) = graph.nodes_matching_label(query) {
             for node in nodes {
                 // Filter for actual symbols (not files or other graph nodes that just contain the query)
                 if node.kind != "symbol" {
@@ -79,7 +80,8 @@ impl Search {
     pub fn list_entry_points(&self) -> Result<Vec<SymbolHit>> {
         let mut out = Vec::new();
         let keywords = ["main", "run", "serve"];
-        if let Ok(nodes) = self.ctx.graph.list_symbols() {
+        let graph = self.ctx.graph.read().unwrap();
+        if let Ok(nodes) = graph.list_symbols() {
             for node in nodes {
                 if !keywords.iter().any(|k| node.label.contains(k)) {
                     continue;

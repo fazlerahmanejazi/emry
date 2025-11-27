@@ -63,8 +63,7 @@ impl FileStore {
 
     pub fn update_file_metadata(&self, metadata: FileMetadata) -> Result<()> {
         let id = metadata.id;
-        let bytes = bincode::serialize(&metadata)?;
-        self.files_tree.insert(&id.to_be_bytes(), bytes)?;
+        self.files_tree.insert_encoded(&id.to_be_bytes(), &metadata)?;
         self.hash_to_id_tree
             .insert(metadata.content_hash.as_bytes(), &id.to_be_bytes())?;
         Ok(())
@@ -88,12 +87,7 @@ impl FileStore {
     }
 
     pub fn get_file_metadata(&self, id: u64) -> Result<Option<FileMetadata>> {
-        if let Some(bytes) = self.files_tree.get(&id.to_be_bytes())? {
-            let meta: FileMetadata = bincode::deserialize(&bytes)?;
-            Ok(Some(meta))
-        } else {
-            Ok(None)
-        }
+        self.files_tree.get_decoded(&id.to_be_bytes())
     }
 
     pub fn get_file_id(&self, path: &Path) -> Result<Option<u64>> {

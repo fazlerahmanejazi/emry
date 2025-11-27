@@ -312,15 +312,6 @@ fn extract_rust_calls_imports(content: &str) -> (Vec<RelationRef>, Vec<RelationR
     let mut calls = Vec::new();
     let mut imports = Vec::new();
     for node in walk_tree(tree.root_node()) {
-        println!(
-            "DEBUG(relations.rs): Node Kind: {:?}, Range: {}:{}-{}:{}, Text: {:?}",
-            node.kind(),
-            node.start_position().row + 1,
-            node.start_position().column + 1,
-            node.end_position().row + 1,
-            node.end_position().column + 1,
-            node.utf8_text(content.as_bytes())
-        );
         match node.kind() {
             "call_expression" => {
                 if let Some(func) = node.child_by_field_name("function") {

@@ -7,17 +7,13 @@ use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::path::Path;
 use tree_sitter::{Parser, Query, QueryCursor};
+use super::languages::{self, ChunkQuery, LanguageSupport};
 
 pub struct GenericChunker {
     language: Language,
     queries: Vec<ChunkQuery>,
     config: ChunkingConfig,
-}
-
-#[derive(Debug, Clone)]
-pub struct ChunkQuery {
-    pub pattern: String,
-    pub priority: u8,
+    support: Option<Box<dyn LanguageSupport>>,
 }
 
 impl GenericChunker {
@@ -26,179 +22,22 @@ impl GenericChunker {
     }
 
     pub fn with_config(language: Language, config: ChunkingConfig) -> Self {
-        let queries = Self::get_queries_for_language(&language);
+        let support = languages::get_language_support(language.clone());
+        let queries = support.as_ref().map(|s| s.get_queries()).unwrap_or_default();
         Self {
             language,
             queries,
             config,
-        }
-    }
-
-    fn get_queries_for_language(lang: &Language) -> Vec<ChunkQuery> {
-        match lang {
-            Language::Python => vec![
-                ChunkQuery {
-                    pattern: "(function_definition) @function".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(class_definition) @class".to_string(),
-                    priority: 5,
-                },
-            ],
-            Language::Go => vec![
-                ChunkQuery {
-                    pattern: "(function_declaration) @function".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(method_declaration) @method".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(type_declaration) @type".to_string(),
-                    priority: 5,
-                },
-            ],
-            Language::Rust => vec![
-                ChunkQuery {
-                    pattern: "(function_item) @function".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(impl_item) @impl".to_string(),
-                    priority: 8,
-                },
-                ChunkQuery {
-                    pattern: "(struct_item) @struct".to_string(),
-                    priority: 5,
-                },
-                ChunkQuery {
-                    pattern: "(enum_item) @enum".to_string(),
-                    priority: 5,
-                },
-                ChunkQuery {
-                    pattern: "(trait_item) @trait".to_string(),
-                    priority: 5,
-                },
-            ],
-            Language::Java => vec![
-                ChunkQuery {
-                    pattern: "(method_declaration) @method".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(class_declaration) @class".to_string(),
-                    priority: 5,
-                },
-            ],
-            Language::TypeScript | Language::JavaScript => vec![
-                ChunkQuery {
-                    pattern: "(function_declaration) @function".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(class_declaration) @class".to_string(),
-                    priority: 5,
-                },
-                ChunkQuery {
-                    pattern: "(method_definition) @method".to_string(),
-                    priority: 10,
-                },
-            ],
-            Language::Cpp => vec![
-                ChunkQuery {
-                    pattern: "(function_definition) @function".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(class_specifier) @class".to_string(),
-                    priority: 5,
-                },
-            ],
-            Language::Ruby => vec![
-                ChunkQuery {
-                    pattern: "(method) @method".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(module) @module".to_string(),
-                    priority: 5,
-                },
-                ChunkQuery {
-                    pattern: "(class) @class".to_string(),
-                    priority: 5,
-                },
-            ],
-            Language::Php => vec![
-                ChunkQuery {
-                    pattern: "(function_definition) @function".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(method_declaration) @method".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(class_declaration) @class".to_string(),
-                    priority: 5,
-                },
-            ],
-            Language::CSharp => vec![
-                ChunkQuery {
-                    pattern: "(method_declaration) @method".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(class_declaration) @class".to_string(),
-                    priority: 5,
-                },
-                ChunkQuery {
-                    pattern: "(interface_declaration) @interface".to_string(),
-                    priority: 5,
-                },
-                ChunkQuery {
-                    pattern: "(struct_declaration) @struct".to_string(),
-                    priority: 5,
-                },
-            ],
-            Language::C => vec![
-                ChunkQuery {
-                    pattern: "(function_definition) @function".to_string(),
-                    priority: 10,
-                },
-                ChunkQuery {
-                    pattern: "(struct_specifier) @struct".to_string(),
-                    priority: 5,
-                },
-                ChunkQuery {
-                    pattern: "(enum_specifier) @enum".to_string(),
-                    priority: 5,
-                },
-            ],
-            Language::Unknown => vec![],
+            support,
         }
     }
 
     fn create_parser(&self) -> Result<Parser> {
-        let mut parser = Parser::new();
-        let lang = match self.language {
-            Language::Python => tree_sitter_python::LANGUAGE,
-            Language::Java => tree_sitter_java::LANGUAGE,
-            Language::TypeScript | Language::JavaScript => {
-                tree_sitter_typescript::LANGUAGE_TYPESCRIPT
-            }
-            Language::Cpp => tree_sitter_cpp::LANGUAGE,
-            Language::Go => tree_sitter_go::LANGUAGE,
-            Language::Rust => tree_sitter_rust::LANGUAGE,
-            Language::Ruby => tree_sitter_ruby::LANGUAGE, // Note: tree-sitter-ruby might not be in Cargo.toml yet
-            Language::Php => tree_sitter_php::LANGUAGE_PHP, // Note: tree-sitter-php might not be in Cargo.toml yet
-            Language::CSharp => tree_sitter_c_sharp::LANGUAGE,
-            Language::C => tree_sitter_c::LANGUAGE,
-            Language::Unknown => return Err(anyhow!("Unknown language")),
-        };
-        parser.set_language(&lang.into())?;
-        Ok(parser)
+        if let Some(support) = &self.support {
+            support.create_parser()
+        } else {
+            Err(anyhow!("Unknown language or no parser support"))
+        }
     }
 
     fn chunk_cast(
@@ -518,7 +357,7 @@ fn split_large_span(
             content,
             file_path,
             line_offsets,
-        ));
+            ));
         cursor = actual_end;
     }
     chunks

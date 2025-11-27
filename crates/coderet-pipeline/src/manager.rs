@@ -13,7 +13,7 @@ use coderet_store::file_blob_store::FileBlobStore;
 use coderet_store::file_store::{FileMetadata, FileStore};
 use coderet_store::relation_store::{RelationStore, RelationType};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tantivy::IndexWriter;
 use tokio::sync::Mutex;
 
@@ -39,7 +39,7 @@ pub struct IndexManager {
     pub content_store: Arc<ContentStore>,
     pub file_blob_store: Arc<FileBlobStore>,
     pub relation_store: Arc<RelationStore>,
-    pub graph: Arc<CodeGraph>,
+    pub graph: Arc<RwLock<CodeGraph>>,
     pub summary: Option<Arc<Mutex<SummaryIndex>>>,
 }
 
@@ -53,7 +53,7 @@ impl IndexManager {
         content_store: Arc<ContentStore>,
         file_blob_store: Arc<FileBlobStore>,
         relation_store: Arc<RelationStore>,
-        graph: Arc<CodeGraph>,
+        graph: Arc<RwLock<CodeGraph>>,
         summary: Option<Arc<Mutex<SummaryIndex>>>,
     ) -> Self {
         Self {
@@ -161,7 +161,8 @@ impl IndexManager {
 
         // Add symbol-definition hits if symbol names match the query
         if cfg.symbol_weight > 0.0 {
-            if let Ok(nodes) = self.graph.nodes_matching_label(query) {
+            let graph = self.graph.read().unwrap();
+            if let Ok(nodes) = graph.nodes_matching_label(query) {
                 for node in nodes {
                     if node.kind != "symbol" {
                         continue;
@@ -200,9 +201,10 @@ impl IndexManager {
 
         // Apply graph/path boost using richer traversal when configured.
         if cfg.graph_weight > 0.0 {
-            let targets = self.graph.nodes_matching_label(query).unwrap_or_default();
+            let graph = self.graph.read().unwrap();
+            let targets = graph.nodes_matching_label(query).unwrap_or_default();
             let target_ids: Vec<String> = targets.iter().map(|n| n.id.clone()).collect();
-            let path_builder = PathBuilder::new(&self.graph);
+            let path_builder = PathBuilder::new(&graph);
             let path_cfg = PathBuilderConfig {
                 max_length: cfg.graph_max_depth.max(1),
                 max_paths: 4,
@@ -214,7 +216,7 @@ impl IndexManager {
                         if !matches!(rel, RelationType::Defines) {
                             continue;
                         }
-                        if let Some(node) = self.graph.get_node(&target)? {
+                        if let Some(node) = graph.get_node(&target)? {
                             if node.label.to_lowercase().contains(&query.to_lowercase()) {
                                 symbol_match_boost = Some(cfg.symbol_weight);
                                 break;
@@ -235,22 +237,28 @@ impl IndexManager {
                 for start in start_nodes.iter() {
                     // Weighted shortest path across all targets
                     for target in &target_ids {
-                        if let Ok(Some(weighted_path)) = self.graph.shortest_weighted_path(
+                        /*
+                        // Shortest weighted path not yet implemented in new CodeGraph
+                        if let Ok(Some(weighted_path)) = graph.shortest_weighted_path(
                             start,
                             target,
                             cfg.graph_max_depth,
                             &|k| edge_weight(k, &cfg.edge_weights),
                         ) {
-                            let dist = weighted_path.len().saturating_sub(1);
-                            let labels: Vec<String> =
-                                weighted_path.iter().map(|n| n.label.clone()).collect();
-                            let path_score =
-                                score_path_labels(&labels, cfg.graph_decay, cfg.graph_path_weight);
-                            if best_boost.map_or(true, |b| path_score > b) {
-                                best_boost = Some(path_score);
-                                best_dist = Some(dist);
-                                best_path_labels = Some(labels);
-                            }
+                             // ...
+                        }
+                        */
+                        // Use basic shortest path for now
+                        if let Ok(Some(path)) = graph.shortest_path(start, target, cfg.graph_max_depth) {
+                             let dist = path.len().saturating_sub(1);
+                             let labels: Vec<String> = path.iter().map(|n| n.label.clone()).collect();
+                             // Simple scoring
+                             let path_score = score_path_labels(&labels, cfg.graph_decay, cfg.graph_path_weight);
+                             if best_boost.map_or(true, |b| path_score > b) {
+                                 best_boost = Some(path_score);
+                                 best_dist = Some(dist);
+                                 best_path_labels = Some(labels);
+                             }
                         }
                     }
                     let paths = path_builder.find_paths_to(start, &target_ids, &path_cfg)?;
@@ -277,7 +285,7 @@ impl IndexManager {
                             if !matches!(rel, RelationType::Defines) {
                                 continue;
                             }
-                            if let Some(node) = self.graph.get_node(&target)? {
+                            if let Some(node) = graph.get_node(&target)? {
                                 if node.label.to_lowercase().contains(&query.to_lowercase()) {
                                     best_boost = Some(cfg.symbol_weight);
                                     best_dist = Some(1);
@@ -347,7 +355,8 @@ impl IndexManager {
                 }
             }
         }
-        if self.graph.get_node(&chunk.id).unwrap_or(None).is_some() {
+        let graph = self.graph.read().unwrap();
+        if graph.get_node(&chunk.id).unwrap_or(None).is_some() {
             nodes.push(chunk.id.clone());
         }
         if let Ok(Some(fid)) = self.file_store.get_file_id(&chunk.file_path) {
@@ -475,7 +484,8 @@ impl IndexManager {
         // 4. Get Paths (Global Context)
         let mut paths = Vec::new();
         if cfg.graph_weight > 0.0 {
-            let builder = PathBuilder::new(&self.graph);
+            let graph = self.graph.read().unwrap();
+            let builder = PathBuilder::new(&graph);
             let path_cfg = PathBuilderConfig {
                 max_length: cfg.graph_max_depth.max(1),
                 max_paths: 5,
@@ -486,7 +496,7 @@ impl IndexManager {
             for c in chunks.iter().take(5) {
                 seeds.push(c.chunk.id.clone());
             }
-            if let Ok(symbols) = self.graph.nodes_matching_label(query) {
+            if let Ok(symbols) = graph.nodes_matching_label(query) {
                 for s in symbols.iter().take(5) {
                     seeds.push(s.id.clone());
                 }
@@ -664,8 +674,11 @@ impl<'a> Transaction<'a> {
         }
 
         // 3. Delete file nodes and graph edges
-        for file_node in &self.file_nodes_to_delete {
-            let _ = self.manager.graph.delete_nodes_for_file(file_node);
+        {
+            let mut graph = self.manager.graph.write().unwrap();
+            for file_node in &self.file_nodes_to_delete {
+                let _ = graph.delete_nodes_for_file(file_node);
+            }
         }
 
         // 4. Commit Vector Index additions
@@ -679,13 +692,18 @@ impl<'a> Transaction<'a> {
                 .update_file_metadata(meta)?;
         }
 
-        // 6. Commit Graph (Sled)
-        for node in self.graph_nodes_to_add {
-            self.manager.graph.add_node(node)?;
+        // 6. Commit Graph (In-Memory + Save)
+        {
+            let mut graph = self.manager.graph.write().unwrap();
+            for node in self.graph_nodes_to_add {
+                graph.add_node(node)?;
+            }
+            for (source, target, kind) in self.graph_edges_to_add {
+                graph.add_edge(&source, &target, &kind)?;
+            }
+            graph.save()?; // SAVE THE GRAPH TO DISK
         }
-        for (source, target, kind) in self.graph_edges_to_add {
-            self.manager.graph.add_edge(&source, &target, &kind)?;
-        }
+
         for (source, target, rel) in self.relations_to_add {
             self.manager
                 .relation_store

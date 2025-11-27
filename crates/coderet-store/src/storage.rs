@@ -26,6 +26,19 @@ pub struct Tree {
 }
 
 impl Tree {
+    pub fn get_decoded<T: serde::de::DeserializeOwned>(&self, key: impl AsRef<[u8]>) -> Result<Option<T>> {
+        match self.inner.get(key)? {
+            Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn insert_encoded<T: serde::Serialize>(&self, key: impl AsRef<[u8]>, value: &T) -> Result<()> {
+        let bytes = bincode::serialize(value)?;
+        self.inner.insert(key, bytes)?;
+        Ok(())
+    }
+
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<Vec<u8>>> {
         Ok(self.inner.get(key)?.map(|iv| iv.to_vec()))
     }

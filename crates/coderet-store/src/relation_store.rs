@@ -27,8 +27,7 @@ impl RelationStore {
         rel_type: RelationType,
     ) -> Result<()> {
         let key = format!("{}:{}", source_id, target_id);
-        let bytes = bincode::serialize(&rel_type)?;
-        self.relations_tree.insert(key.as_bytes(), bytes)?;
+        self.relations_tree.insert_encoded(key.as_bytes(), &rel_type)?;
         Ok(())
     }
 

@@ -20,16 +20,14 @@ impl SummaryStore {
 
     pub fn put(&self, summary: &Summary) -> Result<()> {
         let key = Self::key_for(summary);
-        let bytes = bincode::serialize(summary)?;
-        self.tree.insert(key.as_bytes(), bytes)?;
+        self.tree.insert_encoded(key.as_bytes(), summary)?;
         Ok(())
     }
 
     pub fn put_many(&self, summaries: &[Summary]) -> Result<()> {
         for s in summaries {
             let key = Self::key_for(s);
-            let bytes = bincode::serialize(s)?;
-            self.tree.insert(key.as_bytes(), bytes)?;
+            self.tree.insert_encoded(key.as_bytes(), s)?;
         }
         Ok(())
     }

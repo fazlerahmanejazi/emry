@@ -35,7 +35,7 @@ pub trait GraphToolTrait: Send + Sync {
 }
 
 pub trait FsToolTrait: Send + Sync {
-    fn list_files(&self, dir_path: &Path, limit: Option<usize>) -> anyhow::Result<Vec<DirEntry>>;
+    fn list_files(&self, dir_path: &Path, depth: usize, limit: Option<usize>) -> anyhow::Result<Vec<DirEntry>>;
     fn outline(&self, path: &Path) -> anyhow::Result<Vec<coderet_core::models::Symbol>>;
     fn read_file_span(
         &self,

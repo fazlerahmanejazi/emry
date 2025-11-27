@@ -8,3 +8,6 @@ pub mod storage;
 pub mod summary_store;
 
 pub use storage::{Store, Tree};
+
+#[cfg(test)]
+mod storage_tests;

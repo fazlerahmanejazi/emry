@@ -14,7 +14,7 @@ use coderet_store::relation_store::RelationStore;
 use coderet_store::storage::Store;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
 
 /// Shared, read-only handle to an indexed repository for agent/tool use.
@@ -24,7 +24,7 @@ pub struct RepoContext {
     pub index_dir: PathBuf,
     pub config: Config,
     // pub manager: Arc<IndexManager>, // Removed: Manager is now constructed by the consumer
-    pub graph: Arc<CodeGraph>,
+    pub graph: Arc<RwLock<CodeGraph>>,
     pub file_store: Arc<FileStore>,
     pub content_store: Arc<ContentStore>,
     pub file_blob_store: Arc<FileBlobStore>,
@@ -65,7 +65,11 @@ impl RepoContext {
         let file_blob_store = Arc::new(FileBlobStore::new(store.clone())?);
         let chunk_store = Arc::new(ChunkStore::new(store.clone())?);
         let relation_store = Arc::new(RelationStore::new(store.clone())?);
-        let graph = Arc::new(CodeGraph::new(store.clone())?);
+        
+        // Load graph from file
+        let graph_path = index_dir.join("graph.bin");
+        let graph = Arc::new(RwLock::new(CodeGraph::load(&graph_path)?));
+        
         let commit_log = CommitLog::new(store.clone()).ok();
 
         let lexical = Arc::new(LexicalIndex::new(&index_dir.join("lexical"))?);

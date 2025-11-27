@@ -110,7 +110,7 @@ impl OpenAIProvider {
                 "json_schema": {
                     "name": spec.name,
                     "schema": spec.schema,
-                    "strict": true
+                    "strict": false
                 }
             });
         }

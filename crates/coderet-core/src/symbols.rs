@@ -1,9 +1,23 @@
 use crate::models::{Language, Symbol};
+use crate::tags_extractor::TagsExtractor;
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-/// Extract symbols for a given language. Supports Rust, Go, Python (functions/classes), plus JS/TS/Java/C/C++/C# functions/classes (best-effort).
+/// Extract symbols for a given language using tree-sitter-tags.
+/// Now supports ALL symbol types: structs, enums, traits, interfaces, classes, etc.
 pub fn extract_symbols(content: &str, path: &Path, language: &Language) -> Result<Vec<Symbol>> {
+    // Create extractor per-call since TagsConfiguration isn't Send
+    // This is fine - extraction only happens during indexing, not on hot path
+    let mut extractor = TagsExtractor::new()?;
+    extractor.extract_symbols(content, path, language)
+}
+
+// ===== DEPRECATED: Old manual extraction code below =====
+// Kept temporarily for reference, will be removed after verification
+// TODO: Remove all code below after Phase 2 testing is complete
+
+#[allow(dead_code)]
+fn extract_symbols_legacy(content: &str, path: &Path, language: &Language) -> Result<Vec<Symbol>> {
     match language {
         Language::Rust => extract_rust_symbols(content, path),
         Language::Go => extract_go_symbols(content, path),
@@ -18,6 +32,10 @@ pub fn extract_symbols(content: &str, path: &Path, language: &Language) -> Resul
     }
 }
 
+#[allow(dead_code)]
+use std::path::PathBuf;
+
+#[allow(dead_code)]
 fn leading_doc_comment(content: &str, start_line: usize, language: &Language) -> Option<String> {
     if start_line == 0 {
         return None;
@@ -68,6 +86,8 @@ fn leading_doc_comment(content: &str, start_line: usize, language: &Language) ->
         Some(collected.join("\n"))
     }
 }
+
+#[allow(dead_code)]
 
 fn extract_rust_symbols(content: &str, path: &Path) -> Result<Vec<Symbol>> {
     let mut parser = tree_sitter::Parser::new();

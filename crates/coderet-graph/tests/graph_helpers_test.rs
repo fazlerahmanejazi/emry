@@ -1,19 +1,11 @@
 use coderet_graph::graph::CodeGraph;
-use coderet_store::relation_store::RelationType;
-use coderet_store::storage::Store;
+use std::path::PathBuf;
 
 fn build_graph() -> CodeGraph {
-    let db = sled::Config::new().temporary(true).open().unwrap();
-    // Wrap raw sled db into our Store abstraction
-    // We need to bypass the Store::open(Path) constructor since we have an in-memory/temp DB
-    // But our Store struct is opaque and only has `open(Path)`.
-    // We need to add a constructor to `Store` that accepts `sled::Db` or use a temp file path.
-    
-    // Easier path: use tempfile crate to get a path, then use Store::open
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).unwrap();
+    let path = dir.path().join("graph.bin");
     
-    let graph = CodeGraph::new(store).unwrap();
+    let mut graph = CodeGraph::new(path);
     graph
         .add_node(coderet_graph::graph::GraphNode {
             id: "A".to_string(),
@@ -58,41 +50,47 @@ fn build_graph() -> CodeGraph {
 }
 
 #[test]
-fn neighbors_subgraph_respects_relation_filters_and_hops() {
+fn neighbors_basic() {
     let graph = build_graph();
-    let sub = graph
-        .neighbors_subgraph("A", &[RelationType::Calls], 2)
-        .unwrap();
-    let node_ids: std::collections::HashSet<_> = sub.nodes.iter().map(|n| n.id.as_str()).collect();
-    assert!(node_ids.contains("A"));
+    let neighbors = graph.get_neighbors("A").unwrap();
+    let node_ids: std::collections::HashSet<_> = neighbors.iter().map(|n| n.id.as_str()).collect();
     assert!(node_ids.contains("B"));
-    assert!(node_ids.contains("C"));
-    assert!(
-        !node_ids.contains("D"),
-        "imports edge should be excluded when filtering by calls"
-    );
-    let edge_kinds: std::collections::HashSet<_> =
-        sub.edges.iter().map(|e| e.relation.as_str()).collect();
-    assert_eq!(edge_kinds, std::collections::HashSet::from(["calls"]));
+    
+    let neighbors_b = graph.get_neighbors("B").unwrap();
+    let node_ids_b: std::collections::HashSet<_> = neighbors_b.iter().map(|n| n.id.as_str()).collect();
+    assert!(node_ids_b.contains("C"));
+    assert!(node_ids_b.contains("D"));
 }
 
 #[test]
-fn shortest_paths_filtered_respects_relation_filters() {
+fn shortest_path_basic() {
     let graph = build_graph();
-    let calls_paths = graph
-        .shortest_paths_filtered("A", "C", &[RelationType::Calls], 3)
-        .unwrap();
-    assert_eq!(calls_paths.len(), 1);
-    assert_eq!(
-        calls_paths[0],
-        vec!["A".to_string(), "B".to_string(), "C".to_string()]
-    );
+    let path = graph.shortest_path("A", "C", 5).unwrap().unwrap();
+    let ids: Vec<String> = path.iter().map(|n| n.id.clone()).collect();
+    assert_eq!(ids, vec!["A", "B", "C"]);
+}
 
-    let import_paths = graph
-        .shortest_paths_filtered("A", "C", &[RelationType::Imports], 3)
-        .unwrap();
-    assert!(
-        import_paths.is_empty(),
-        "imports-only filter should not find a calls path"
-    );
+#[test]
+fn persistence_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("graph.bin");
+    
+    {
+        let mut graph = CodeGraph::new(path.clone());
+        graph.add_node(coderet_graph::graph::GraphNode {
+            id: "X".to_string(),
+            kind: "test".to_string(),
+            label: "X".to_string(),
+            canonical_id: None,
+            file_path: "x.rs".to_string(),
+        }).unwrap();
+        graph.save().unwrap();
+    }
+    
+    {
+        let graph = CodeGraph::load(&path).unwrap();
+        let node = graph.get_node("X").unwrap();
+        assert!(node.is_some());
+        assert_eq!(node.unwrap().label, "X");
+    }
 }

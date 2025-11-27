@@ -1,6 +1,7 @@
 pub mod generic;
 pub mod splitter;
 pub mod tokenizer;
+pub mod languages;
 
 pub use coderet_config::{ChunkingConfig, SplitStrategy};
 pub use generic::GenericChunker;

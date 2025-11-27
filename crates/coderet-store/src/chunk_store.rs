@@ -37,8 +37,7 @@ impl ChunkStore {
             content_hash: chunk.content_hash.clone(),
         };
 
-        let bytes = bincode::serialize(&stored)?;
-        self.chunks_tree.insert(chunk.id.as_bytes(), bytes)?;
+        self.chunks_tree.insert_encoded(chunk.id.as_bytes(), &stored)?;
 
         // Update file_chunks index
         self.add_chunk_to_file_index(file_id, &chunk.id)?;
@@ -63,15 +62,14 @@ impl ChunkStore {
         // Update file->chunks index
         for item in self.file_chunks_tree.iter() {
             let (key, val) = item?;
-            let mut chunks: Vec<String> = bincode::deserialize(&val)?;
+            let mut chunks: Vec<String> = self.file_chunks_tree.get_decoded(&val)?.unwrap_or_default();
             let before = chunks.len();
             chunks.retain(|c| !to_remove.contains(c));
             if chunks.len() != before {
                 if chunks.is_empty() {
                     let _ = self.file_chunks_tree.remove(key)?;
                 } else {
-                    let bytes = bincode::serialize(&chunks)?;
-                    self.file_chunks_tree.insert(key, bytes)?;
+                    self.file_chunks_tree.insert_encoded(key, &chunks)?;
                 }
             }
         }
@@ -81,36 +79,21 @@ impl ChunkStore {
 
     fn add_chunk_to_file_index(&self, file_id: u64, chunk_id: &str) -> Result<()> {
         let key = file_id.to_be_bytes();
-        let mut chunks: Vec<String> = if let Some(bytes) = self.file_chunks_tree.get(&key)? {
-            bincode::deserialize(&bytes)?
-        } else {
-            Vec::new()
-        };
+        let mut chunks: Vec<String> = self.file_chunks_tree.get_decoded(&key)?.unwrap_or_default();
 
         if !chunks.contains(&chunk_id.to_string()) {
             chunks.push(chunk_id.to_string());
-            let bytes = bincode::serialize(&chunks)?;
-            self.file_chunks_tree.insert(&key, bytes)?;
+            self.file_chunks_tree.insert_encoded(&key, &chunks)?;
         }
         Ok(())
     }
 
     pub fn get_chunk(&self, id: &str) -> Result<Option<StoredChunk>> {
-        if let Some(bytes) = self.chunks_tree.get(id.as_bytes())? {
-            let chunk: StoredChunk = bincode::deserialize(&bytes)?;
-            Ok(Some(chunk))
-        } else {
-            Ok(None)
-        }
+        self.chunks_tree.get_decoded(id.as_bytes())
     }
 
     pub fn get_chunks_for_file(&self, file_id: u64) -> Result<Vec<String>> {
-        if let Some(bytes) = self.file_chunks_tree.get(&file_id.to_be_bytes())? {
-            let chunks: Vec<String> = bincode::deserialize(&bytes)?;
-            Ok(chunks)
-        } else {
-            Ok(Vec::new())
-        }
+        Ok(self.file_chunks_tree.get_decoded(&file_id.to_be_bytes())?.unwrap_or_default())
     }
 
     pub fn delete_chunks_for_file(&self, file_id: u64) -> Result<()> {

@@ -5,7 +5,7 @@ use coderet_config::CoreConfig;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, trace};
 
 #[derive(Debug, Clone)]
 pub struct ScannedFile {
@@ -58,7 +58,7 @@ pub fn scan_repo(root: &Path, config: &CoreConfig) -> Vec<ScannedFile> {
                     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                         let lang = Language::from_extension(ext);
                         if path.to_string_lossy().contains("search.rs") {
-                            debug!(
+                            trace!(
                                 "Path: {}, Ext: {:?}, Lang: {:?}",
                                 path.display(),
                                 ext,
