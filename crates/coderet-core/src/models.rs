@@ -114,7 +114,7 @@ pub struct Summary {
     pub embedding: Option<Vec<f32>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoredChunk {
     pub score: f32,
     pub lexical_score: Option<f32>,
@@ -127,7 +127,7 @@ pub struct ScoredChunk {
     pub chunk: crate::models::Chunk,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextualResult {
     pub chunks: Vec<ScoredChunk>,
     pub paths: Vec<paths::Path>,

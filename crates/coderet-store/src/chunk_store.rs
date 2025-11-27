@@ -1,7 +1,7 @@
+use crate::storage::{Store, Tree};
 use anyhow::Result;
 use coderet_core::models::Chunk;
 use serde::{Deserialize, Serialize};
-use sled::Db;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredChunk {
@@ -15,15 +15,15 @@ pub struct StoredChunk {
 }
 
 pub struct ChunkStore {
-    chunks_tree: sled::Tree,
-    file_chunks_tree: sled::Tree, // file_id -> Vec<chunk_id>
+    chunks_tree: Tree,
+    file_chunks_tree: Tree, // file_id -> Vec<chunk_id>
 }
 
 impl ChunkStore {
-    pub fn new(db: Db) -> Result<Self> {
+    pub fn new(store: Store) -> Result<Self> {
         Ok(Self {
-            chunks_tree: db.open_tree("chunks")?,
-            file_chunks_tree: db.open_tree("file_chunks")?,
+            chunks_tree: store.open_tree("chunks")?,
+            file_chunks_tree: store.open_tree("file_chunks")?,
         })
     }
 

@@ -121,7 +121,7 @@ fn default_max_total_lines() -> usize {
 }
 
 fn default_step_timeout() -> u64 {
-    8
+    30
 }
 
 #[cfg(test)]

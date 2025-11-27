@@ -4,59 +4,7 @@ use crate::llm::{Message, OpenAIProvider};
 use crate::planner::Plan;
 use anyhow::Result;
 
-const REVIEW_PROMPT: &str = concat!(
-    "Provide a comprehensive code review with these sections:\n\n",
-    "## Architecture Overview\n",
-    "Describe the high-level design: key components, their responsibilities, ",
-    "and how they interact. ",
-    "Use file paths/lines. Mention layering (e.g., CLI → Manager → Stores).\n\n",
-    "## Strengths\n",
-    "- Modularity and separation of concerns\n",
-    "- Type safety and trait usage\n",
-    "- Performance optimizations (if evident)\n\n",
-    "## Risks & Weaknesses\n",
-    "- Error handling gaps (unwraps, panics, unhandled errors)\n",
-    "- Potential performance bottlenecks\n",
-    "- Missing abstractions or tight coupling\n",
-    "- Technical debt indicators\n\n",
-    "## Maintainability\n",
-    "- Code organization and naming\n",
-    "- Documentation coverage\n",
-    "- Test coverage (if evidence shows test changes)\n\n",
-    "## Recommendations\n",
-    "Suggest 2-3 specific areas to improve. Cite file paths. ",
-    "**Format any code examples using markdown code blocks** (```lang).\n\n",
-    "Use only the observations; do not speculate. Be direct and factual. ",
-    "Highlight recent commits to show active development areas."
-);
 
-const INFRA_FLOW_PROMPT: &str = concat!(
-    "Explain whether the flow exists and how it works. ",
-    "**Use graph_neighbors and graph_paths observations to trace the flow through the codebase.** ",
-    "Describe call chains using graph edges ",
-    "(e.g., 'handler →[calls]→ service →[imports]→ DB module'). ",
-    "**Format any code snippets using markdown code blocks** (```lang). ",
-    "Mention relationship types (calls, imports, defines) when describing flows. ",
-    "If graph evidence shows paths between components, describe that flow step-by-step. ",
-    "If evidence is missing, say so and include that searches (chunks/summaries/symbols/graph) ",
-    "returned no relevant results. ",
-    "Cite file paths/lines. Use only the observations; do not speculate."
-);
-
-const CODE_INTROSPECTION_PROMPT: &str = concat!(
-    "Explain the functions/types/algorithms found. ",
-    "**Format all code snippets using markdown code blocks** (```rust for Rust, ",
-    "```python for Python, etc.). ",
-    "Include file paths and line numbers. ",
-    "If evidence is thin, say so. ",
-    "Cite file paths/lines. Use only the observations; do not speculate."
-);
-
-const OVERVIEW_REVIEW_PROMPT: &str = concat!(
-    "Explain the project/components based on the evidence. ",
-    "Quote key snippets with fenced code blocks (```lang) and cite file paths/lines. ",
-    "If coverage is sparse, say so. Use only the observations; do not speculate."
-);
 
 pub struct Synthesizer {
     llm: OpenAIProvider,
@@ -173,10 +121,10 @@ impl Synthesizer {
             ));
         }
         let instructions = match classified.intent {
-            QueryIntent::Review => REVIEW_PROMPT,
-            QueryIntent::InfraFlow => INFRA_FLOW_PROMPT,
-            QueryIntent::CodeIntrospection => CODE_INTROSPECTION_PROMPT,
-            QueryIntent::OverviewReview => OVERVIEW_REVIEW_PROMPT,
+            QueryIntent::Review => crate::prompts::REVIEW_PROMPT,
+            QueryIntent::InfraFlow => crate::prompts::INFRA_FLOW_PROMPT,
+            QueryIntent::CodeIntrospection => crate::prompts::CODE_INTROSPECTION_PROMPT,
+            QueryIntent::OverviewReview => crate::prompts::OVERVIEW_REVIEW_PROMPT,
         };
         let prompt = format!(
             concat!(

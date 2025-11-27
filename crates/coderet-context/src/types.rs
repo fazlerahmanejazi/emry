@@ -1,8 +1,9 @@
 use coderet_core::models::{Chunk, Language, Symbol};
 use coderet_graph::graph::GraphNode;
 use coderet_index::summaries::SummaryRecord;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkHit {
     pub score: f32,
     pub lexical_score: Option<f32>,
@@ -11,13 +12,13 @@ pub struct ChunkHit {
     pub chunk: Chunk,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryHit {
     pub score: f32,
     pub summary: SummaryRecord,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolHit {
     pub name: String,
     pub file_path: String,
@@ -27,14 +28,14 @@ pub struct SymbolHit {
     pub symbol: Symbol,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphEdge {
     pub source: String,
     pub target: String,
     pub kind: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphSubgraph {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,

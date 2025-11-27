@@ -268,6 +268,11 @@ fn merge_llm(base: LlmConfig, overlay: LlmConfig) -> LlmConfig {
             base.max_tokens
         },
         api_base: overlay.api_base.or(base.api_base),
+        timeout_secs: if overlay.timeout_secs != default.timeout_secs {
+            overlay.timeout_secs
+        } else {
+            base.timeout_secs
+        },
     }
 }
 

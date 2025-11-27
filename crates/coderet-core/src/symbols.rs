@@ -91,6 +91,7 @@ fn extract_rust_symbols(content: &str, path: &Path) -> Result<Vec<Symbol>> {
             stack.push(child);
         }
 
+        // First, handle top-level function items as before
         if node.kind() == "function_item" {
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = name_node
@@ -109,11 +110,69 @@ fn extract_rust_symbols(content: &str, path: &Path) -> Result<Vec<Symbol>> {
                     file_path: PathBuf::from(path),
                     start_line: start.row + 1,
                     end_line: end.row + 1,
-                    fqn: name,
+                    fqn: name.clone(), // FQN is just name for top-level functions
                     language: Language::Rust,
                     doc_comment: leading_doc_comment(content, start.row + 1, &Language::Rust),
                 };
                 symbols.push(symbol);
+            }
+        } else if node.kind() == "impl_item" {
+            let mut type_name = "_".to_string(); // Default if type cannot be determined
+            if let Some(type_node) = node.child_by_field_name("type") {
+                type_name = type_node
+                    .utf8_text(content.as_bytes())
+                    .unwrap_or("")
+                    .to_string();
+
+                // Check for 'impl Trait for Type' pattern
+                // Iterate through siblings to find the 'for' keyword
+                let mut current_sibling = type_node.next_sibling();
+                while let Some(sibling) = current_sibling {
+                    if sibling.kind() == "for" {
+                        if let Some(actual_type_node) = sibling.next_sibling() {
+                            type_name = actual_type_node
+                                .utf8_text(content.as_bytes())
+                                .unwrap_or("")
+                                .to_string();
+                        }
+                        break; // Found the 'for' and extracted the type, so break
+                    }
+                    current_sibling = sibling.next_sibling();
+                }
+            }
+
+            let mut impl_cursor = node.walk();
+            for item in node.children(&mut impl_cursor) {
+                if item.kind() == "function_item" {
+                    if let Some(name_node) = item.child_by_field_name("name") {
+                        let name = name_node
+                            .utf8_text(content.as_bytes())
+                            .unwrap_or("")
+                            .to_string();
+                        if name.is_empty() {
+                            continue;
+                        }
+                        let start = item.start_position();
+                        let end = item.end_position();
+                        let fqn = format!("{}::{}", type_name, name);
+                        let symbol = Symbol {
+                            id: format!("{}:{}-{}", path.display(), start.row + 1, end.row + 1),
+                            name: name.clone(),
+                            kind: "method".to_string(), // Mark as method
+                            file_path: PathBuf::from(path),
+                            start_line: start.row + 1,
+                            end_line: end.row + 1,
+                            fqn,
+                            language: Language::Rust,
+                            doc_comment: leading_doc_comment(
+                                content,
+                                start.row + 1,
+                                &Language::Rust,
+                            ),
+                        };
+                        symbols.push(symbol);
+                    }
+                }
             }
         }
     }

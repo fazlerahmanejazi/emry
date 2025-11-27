@@ -1,5 +1,5 @@
-use crate::context::RepoContext;
-use crate::types::SummaryHit;
+use coderet_context::RepoContext;
+use coderet_context::types::SummaryHit;
 use anyhow::Result;
 use std::sync::Arc;
 

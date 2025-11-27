@@ -1,32 +1,30 @@
 // Simplified CLI and command handlers using the new architecture.
 // Focused on correctness and robustness; supports incremental updates with hash-based detection.
-mod context;
-mod embedders;
-mod index_pipeline;
 mod llm;
 mod print_snippet;
 mod regex_utils;
 mod summaries;
 
-use crate::commands::index_pipeline::{compute_hash, prepare_files_async, FileInput, PreparedFile};
 use crate::commands::llm::LlmClient;
 use anyhow::Result;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
-use coderet_agent::{agent::AskAgent, context as agent_context};
+use coderet_agent::agent_loop::AgentLoop;
+use coderet_context as agent_context;
 use coderet_config::Config;
 use coderet_core::models::Language;
 use coderet_core::scanner::scan_repo;
-use coderet_graph::graph::{CodeGraph, GraphNode};
+use coderet_graph::graph::{CodeGraph, GraphNode, GraphSubgraph};
 use coderet_index::lexical::LexicalIndex;
-use coderet_index::manager::IndexManager;
+use coderet_pipeline::manager::IndexManager;
 use coderet_index::summaries::SummaryIndex as SimpleSummaryIndex;
 use coderet_index::vector::VectorIndex;
+use coderet_pipeline::index::{compute_hash, prepare_files_async, FileInput, PreparedFile};
 use coderet_store::chunk_store::ChunkStore;
 use coderet_store::commit_log::{CommitEntry, CommitLog};
 use coderet_store::content_store::ContentStore;
 use coderet_store::file_store::{FileMetadata, FileStore};
 use coderet_store::relation_store::{RelationStore, RelationType};
-use embedders::select_embedder;
+use coderet_context::embedder::select_embedder;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use indicatif::{ProgressBar, ProgressStyle};
 use print_snippet::print_snippet;
@@ -36,9 +34,9 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use summaries::maybe_generate_summaries;
-use termimad::{FmtText, MadSkin};
+use termimad::{FmtText, MadSkin}; // Re-adding for render_markdown_answer
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 
 #[derive(Parser)]
 #[command(name = "code-retriever")]
@@ -100,45 +98,39 @@ pub enum Commands {
     Ask {
         /// The question
         query: String,
-        #[arg(long, value_enum, default_value_t = AskDepth::Default)]
-        depth: AskDepth,
-        /// Use the agent (plan/execute). Defaults to on; disable with --agent=false.
-        #[arg(long, default_value_t = true, action = ArgAction::Set)]
-        agent: bool,
-        /// Output detail level
-        #[arg(long, value_enum, default_value_t = OutputLevel::Progress)]
-        output: OutputLevel,
-        /// Output JSON (answer, plan, observations)
+        /// Show verbose output (thoughts, tool calls, observations)
         #[arg(long, default_value_t = false)]
-        json: bool,
-        /// Max results per tool call (override default)
-        #[arg(long)]
-        max_per_step: Option<usize>,
-        /// Max observations sent to the LLM (override default)
-        #[arg(long)]
-        max_observations: Option<usize>,
-        /// Max tokens for LLM calls (override default)
-        #[arg(long)]
-        max_tokens: Option<u32>,
+        verbose: bool,
     },
+    /// Query the code graph directly
+    Graph(GraphArgs),
     /// Show status (not yet implemented)
     Status,
     /// Launch the TUI (still legacy)
     Tui,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
-pub enum AskDepth {
-    Shallow,
-    Default,
-    Deep,
+#[derive(Parser)]
+pub struct GraphArgs {
+    /// The node ID to start from (e.g., a file path, chunk ID, or symbol ID)
+    #[arg(long)]
+    pub node: String,
+    /// Direction of traversal (incoming, outgoing)
+    #[arg(long, value_enum, default_value_t = GraphDirection::Outgoing)]
+    pub direction: GraphDirection,
+    /// Maximum number of hops (depth) to traverse
+    #[arg(long, default_value_t = 1)]
+    pub max_hops: u8,
+    /// Filter by relation kinds (e.g., calls, imports, defines)
+    #[arg(long)]
+    pub kinds: Vec<String>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
-pub enum OutputLevel {
-    Silent,
-    Progress,
-    Detailed,
+pub enum GraphDirection {
+    Incoming,
+    Outgoing,
+    Both,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -157,7 +149,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
     let config = if let Some(p) = config_path {
         Config::from_file(p)?
     } else {
-        Config::load()?
+        Config::load()? 
     };
 
     if index_dir.exists() {
@@ -175,17 +167,17 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
 
     // Initialize storage
     let db_path = index_dir.join("store.db");
-    let db = sled::open(&db_path)?;
+    let store = coderet_store::Store::open(&db_path)?;
 
-    let file_store = Arc::new(FileStore::new(db.clone())?);
-    let content_store = Arc::new(ContentStore::new(db.clone())?);
+    let file_store = Arc::new(FileStore::new(store.clone())?);
+    let content_store = Arc::new(ContentStore::new(store.clone())?);
     let file_blob_store = Arc::new(coderet_store::file_blob_store::FileBlobStore::new(
-        db.clone(),
+        store.clone(),
     )?);
-    let chunk_store = Arc::new(ChunkStore::new(db.clone())?);
-    let relation_store = Arc::new(RelationStore::new(db.clone())?);
-    let commit_log = Arc::new(CommitLog::new(db.clone())?);
-    let graph = Arc::new(CodeGraph::new(db.clone())?);
+    let chunk_store = Arc::new(ChunkStore::new(store.clone())?);
+    let relation_store = Arc::new(RelationStore::new(store.clone())?);
+    let commit_log = Arc::new(CommitLog::new(store.clone())?);
+    let graph = Arc::new(CodeGraph::new(store.clone())?);
 
     // Initialize indices
     let lexical = Arc::new(LexicalIndex::new(&index_dir.join("lexical"))?);
@@ -197,7 +189,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
     ));
 
     // Select embedder (optional; enables vector search if available)
-    let embedder = select_embedder(&config.embedding);
+    let embedder = select_embedder(&config.embedding).await.ok();
     let embedder_for_manager = embedder.clone();
     let _embedder_for_search = embedder.clone();
 
@@ -228,6 +220,10 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
     spinner.enable_steady_tick(Duration::from_millis(100));
 
     let scanned_files = scan_repo(&root, &config.core);
+    debug!("Scanned {} files. Paths:", scanned_files.len());
+    for file in &scanned_files {
+        debug!("  - {}", file.path.display());
+    }
     spinner.finish_with_message(format!(
         "Found {} source files to index.",
         scanned_files.len()
@@ -468,10 +464,15 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
             );
         }
 
-        call_edges.extend(pf.call_edges.into_iter());
+        call_edges.extend(pf.call_edges.clone().into_iter()); // Clone here
         import_edges.extend(pf.import_edges.into_iter());
         if config.summary.enabled {
             file_content_map.insert(pf.path.clone(), pf.content.clone());
+        }
+
+        debug!("File: {}, Raw call_edges from prepare_file:", pf.path.display());
+        for (caller, callee_name) in &pf.call_edges {
+            debug!("  - Caller: {}, Callee: {}", caller, callee_name);
         }
     }
 
@@ -494,9 +495,18 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
                 .next()
                 .and_then(|n| name_to_symbol.get(n))
         });
+        debug!(
+            "Processing call: caller='{}', callee_name='{}', resolved_target_id='{}'",
+            caller,
+            callee_name,
+            target.map_or("None".to_string(), |s| s.clone())
+        );
         if let Some(target_id) = target {
+            debug!("Adding call edge: {} -> {}", caller, target_id);
             txn.add_graph_edge(caller.clone(), target_id.clone(), "calls".to_string());
             txn.add_relation(caller.clone(), target_id.clone(), RelationType::Calls);
+        } else {
+            debug!("No target found for callee_name='{}'", callee_name);
         }
     }
     for (file_node, import_name) in import_edges {
@@ -569,7 +579,18 @@ pub async fn handle_search(
     let content_store = ctx.content_store.clone();
     let index_dir = ctx.index_dir.clone();
     let embedder = ctx.embedder.clone();
-    let manager = ctx.manager.clone();
+    let manager = Arc::new(IndexManager::new(
+        ctx.lexical.clone(),
+        ctx.vector.clone(),
+        embedder.clone(),
+        ctx.file_store.clone(),
+        ctx.chunk_store.clone(),
+        ctx.content_store.clone(),
+        ctx.file_blob_store.clone(),
+        ctx.relation_store.clone(),
+        ctx.graph.clone(),
+        Some(ctx.summary_index.clone()),
+    ));
 
     // Symbol search short-circuit
     if symbol {
@@ -599,7 +620,7 @@ pub async fn handle_search(
         for (i, (name, file_path)) in matches.iter().enumerate() {
             println!("{}: {} ({})", i + 1, name, file_path.display());
         }
-        return Ok(());
+        return Ok(())
     }
 
     if summary {
@@ -624,7 +645,7 @@ pub async fn handle_search(
                         println!("\n#{} (score {:.3}) {}", i + 1, score, loc);
                         println!("{}", sum.text);
                     }
-                    return Ok(());
+                    return Ok(())
                 }
                 Err(e) => eprintln!("Semantic summary search failed: {}", e),
             }
@@ -648,7 +669,7 @@ pub async fn handle_search(
             println!("\n#{} {}", i + 1, loc);
             println!("{}", sum.text);
         }
-        return Ok(());
+        return Ok(())
     }
 
     // Regex short-circuit
@@ -675,7 +696,7 @@ pub async fn handle_search(
                 println!("{}:{}: {}", rel.display(), line, content);
             }
         }
-        return Ok(());
+        return Ok(())
     }
 
     let results = manager
@@ -733,14 +754,14 @@ pub async fn handle_search(
     for (i, hit) in fused.iter().enumerate() {
         let chunk = &hit.chunk;
         println!(
-            "\n#{} [{:.3}] lex={:.3?} vec={:.3?} graph={:.3?} sym={:.3?} sum={:.3?} {}:{}-{}",
+            "\n#{} [{:.3}] lex={:.3?} vec={:.3?} graph={:.3?} sym={:.3?} sum={:.3} {}:{}-{}",
             i + 1,
             hit.score,
             hit.lexical_score,
             hit.vector_score,
             hit.graph_boost,
             hit.symbol_boost,
-            hit.summary_score,
+            hit.summary_score.unwrap_or(0.0),
             chunk.file_path.display(),
             chunk.start_line,
             chunk.end_line
@@ -754,273 +775,248 @@ pub async fn handle_search(
     Ok(())
 }
 
-pub async fn handle_ask(
-    query: String,
-    depth: AskDepth,
-    use_agent: bool,
-    output: OutputLevel,
-    json: bool,
-    max_per_step: Option<usize>,
-    max_observations: Option<usize>,
-    max_tokens: Option<u32>,
-    config_path: Option<&Path>,
-) -> Result<()> {
-    if matches!(output, OutputLevel::Detailed | OutputLevel::Progress) {
+pub async fn handle_ask(query: String, verbose: bool, config_path: Option<&Path>) -> Result<()> {
+    if verbose {
         println!("🔎 Query: {}", query);
-        if use_agent {
-            println!(""); // Blank line for spacing
-        }
     }
 
-    // If agent is requested but cannot be initialized (missing LLM keys), fall back to RAG.
-    let agent_ctx = match agent_context::RepoContext::from_env(config_path).await {
-        Ok(ctx) => Arc::new(ctx),
-        Err(e) => {
-            if use_agent {
-                eprintln!("Agent context unavailable ({}); falling back to RAG.", e);
+    let ctx = Arc::new(agent_context::RepoContext::from_env(config_path).await?);
+    let manager = Arc::new(IndexManager::new(
+        ctx.lexical.clone(),
+        ctx.vector.clone(),
+        ctx.embedder.clone(),
+        ctx.file_store.clone(),
+        ctx.chunk_store.clone(),
+        ctx.content_store.clone(),
+        ctx.file_blob_store.clone(),
+        ctx.relation_store.clone(),
+        ctx.graph.clone(),
+        Some(ctx.summary_index.clone()),
+    ));
+
+    let agent_loop = AgentLoop::new(ctx, manager)?;
+    let result = agent_loop.run(&query, verbose).await?;
+
+    println!("\nFinal Answer:\n{}", result.final_answer);
+
+    if verbose {
+        println!("\n--- Agent Execution Trace ---");
+        for (i, turn) in result.turns.iter().enumerate() {
+            println!("Step {}:", i + 1);
+            println!("  THOUGHT: {}", turn.thought);
+            if let Some(tool_call) = &turn.tool_call {
+                println!("  TOOL_CALL: {} {:?}", tool_call.tool_name, tool_call.args);
             }
-            return answer_with_rag(&query, depth, output, json, max_tokens, config_path).await;
+            if let Some(observation) = &turn.observation {
+                println!("  OBSERVATION: {}", observation);
+            }
+            println!("");
         }
-    };
-
-    let limit = match depth {
-        AskDepth::Shallow => 3,
-        AskDepth::Default => agent_ctx.config.search.top_k,
-        AskDepth::Deep => std::cmp::max(20, agent_ctx.config.search.top_k),
-    };
-
-    if !use_agent {
-        return answer_with_rag(&query, depth, output, json, max_tokens, config_path).await;
+        println!("--- Metrics ---");
+        println!("  Total Duration: {}ms", result.metrics.total_duration_ms);
+        println!("  LLM Calls: {}", result.metrics.llm_calls);
+        println!("  Tool Calls: {}", result.metrics.tool_calls);
+        println!("  Total Steps: {}", result.metrics.total_steps);
     }
 
-    let mut agent = match AskAgent::new(agent_ctx.clone()) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("Agent unavailable ({}); falling back to RAG.", e);
-            return answer_with_rag(&query, depth, output, json, max_tokens, config_path).await;
-        }
-    };
+    Ok(())
+}
 
-    // Apply user overrides
-    if let Some(v) = max_per_step {
-        agent.config.max_per_step = v;
-    }
-    if let Some(v) = max_observations {
-        agent.config.max_observations = v;
-    }
-    if let Some(v) = max_tokens {
-        agent.config.max_tokens = v;
+pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result<()> {
+    let ctx = agent_context::RepoContext::from_env(config_path).await?;
+    let graph = ctx.graph.clone();
+
+    if args.node == "OUTGOING_TREE_DEBUG" {
+        println!("DEBUG: Calling debug_outgoing_tree ()");
+        return graph.debug_outgoing_tree();
     }
 
-    let show_progress = matches!(output, OutputLevel::Progress | OutputLevel::Detailed);
-    let result = agent.answer_question(&query, limit, show_progress).await?;
-
-    if json {
-        let payload = serde_json::json!({
-            "answer": result.answer,
-            "plan": result.plan,
-            "observations": result.observations,
-            "actions": result.actions_run,
-            "coverage": result.coverage,
-            "coverage_notes": result.coverage_notes,
-            "coverage_summary": result.coverage_summary,
-            "classified": {
-                "intent": format!("{:?}", result.intent),
-                "secondary_intents": result
-                    .classified
-                    .secondary_intents
+    // Resolve node ID using the Resolution Layer
+    let node_id = match graph.resolve_node_id(&args.node) {
+        Ok(id) => id,
+        Err(coderet_graph::graph::ResolutionError::Ambiguous(query, candidates)) => {
+            eprintln!(
+                "Ambiguous node '{}'. Did you mean one of these?\n{}",
+                query,
+                candidates
                     .iter()
-                    .map(|i| format!("{:?}", i))
-                    .collect::<Vec<_>>(),
-                "keywords": result.classified.domain_keywords,
+                    .enumerate()
+                    .map(|(i, c)| format!("{}. {}", i + 1, c))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            return Ok(())
+        }
+        Err(coderet_graph::graph::ResolutionError::NotFound(query)) => {
+            eprintln!("Node '{}' not found in the graph.", query);
+            return Ok(())
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    let relation_types: Vec<RelationType> = args
+        .kinds
+        .iter()
+        .filter_map(|k| match k.as_str() {
+            "calls" => Some(RelationType::Calls),
+            "imports" => Some(RelationType::Imports),
+            "defines" => Some(RelationType::Defines),
+            _ => {
+                eprintln!("Unknown relation kind: {}", k);
+                None
             }
-        });
-        println!("{}", serde_json::to_string_pretty(&payload)?);
-        return Ok(());
-    }
+        })
+        .collect();
 
     println!(
-        "\nAnswer:\n{}\n",
-        render_markdown_answer(result.answer.trim())
+        "{:?} neighbors for node '{}' (resolved to: '{}', max_hops: {}, kinds: {:?}):",
+        args.direction, args.node, node_id, args.max_hops, args.kinds
     );
 
-    if matches!(output, OutputLevel::Detailed) {
-        println!("Plan steps:");
-        for (idx, step) in result.plan.steps.iter().enumerate() {
-            println!(" {}. {} {}", idx + 1, step.action, step.params.to_string());
+    // Use neighbors_subgraph for outgoing, manually build for incoming
+    let subgraph = match args.direction {
+        GraphDirection::Outgoing => {
+            graph.neighbors_subgraph(&node_id, &relation_types, args.max_hops)?
         }
-
-        println!("\nObservations used:");
-        for (i, obs) in result.observations.iter().enumerate() {
-            println!("\n[{}] {} - {}", i + 1, obs.step_id, obs.action);
-            if let Some(err) = &obs.error {
-                println!("  error: {}", err);
-                continue;
-            }
-            for ev in &obs.evidence {
-                let loc = ev
-                    .file_path
-                    .as_ref()
-                    .map(|p| p.to_string())
-                    .unwrap_or_else(|| "n/a".to_string());
-                let range = match (ev.start_line, ev.end_line) {
-                    (Some(s), Some(e)) => format!("{}-{}", s, e),
-                    _ => "n/a".to_string(),
-                };
-                println!("  [{}:{}] {}", loc, range, ev.source);
-                if !ev.tags.is_empty() {
-                    println!("    tags: {}", ev.tags.join(", "));
-                }
-                println!("{}\n", ev.text);
-            }
+        GraphDirection::Incoming => {
+            // Build incoming subgraph manually
+            build_incoming_subgraph(&*graph, &node_id, &relation_types, args.max_hops)?
         }
-
-        println!("\nCoverage summary:");
-        println!(
-            " search_hits={}, summary_hits={}, symbol_hits={}, graph_hits={}, file_reads={}",
-            result.coverage_summary.search_hits,
-            result.coverage_summary.summary_hits,
-            result.coverage_summary.symbol_hits,
-            result.coverage_summary.graph_hits,
-            result.coverage_summary.file_reads,
-        );
-        if !result.coverage_summary.search_queries.is_empty() {
-            println!(
-                " search queries: {}",
-                result.coverage_summary.search_queries.join(" | ")
-            );
+        GraphDirection::Both => {
+            // Build both directions
+            build_both_subgraph(&*graph, &node_id, &relation_types, args.max_hops)?
         }
-        if !result.coverage_summary.summary_queries.is_empty() {
-            println!(
-                " summary queries: {}",
-                result.coverage_summary.summary_queries.join(" | ")
-            );
-        }
-        if !result.coverage_summary.symbol_queries.is_empty() {
-            println!(
-                " symbol queries: {}",
-                result.coverage_summary.symbol_queries.join(" | ")
-            );
-        }
-        if !result.coverage_summary.graph_nodes.is_empty() {
-            println!(
-                " graph roots: {}",
-                result.coverage_summary.graph_nodes.join(" | ")
-            );
-        }
-        if !result.coverage_summary.scanned_dirs.is_empty() {
-            println!(
-                " scanned dirs: {}",
-                result.coverage_summary.scanned_dirs.join(" | ")
-            );
-        }
-    }
-
-    Ok(())
-}
-
-async fn answer_with_rag(
-    query: &str,
-    depth: AskDepth,
-    output: OutputLevel,
-    json: bool,
-    max_tokens: Option<u32>,
-    config_path: Option<&Path>,
-) -> Result<()> {
-    let ctx = agent_context::RepoContext::from_env(config_path).await?;
-    let limit = match depth {
-        AskDepth::Shallow => 6,
-        AskDepth::Default => ctx.config.search.top_k.max(8),
-        AskDepth::Deep => std::cmp::max(16, ctx.config.search.top_k * 2),
     };
 
-    let hits = ctx
-        .manager
-        .search_ranked(query, limit, Some(rank_cfg(&ctx.config)))
-        .await?;
-
-    // Deduplicate by file to improve diversity.
-    let mut seen = std::collections::HashSet::new();
-    let mut snippets = Vec::new();
-    for hit in hits {
-        let file_key = hit.chunk.file_path.to_string_lossy().to_string();
-        if !seen.insert(file_key.clone()) {
-            continue;
-        }
-        let snippet = hit
-            .chunk
-            .content
-            .lines()
-            .take(80)
-            .collect::<Vec<_>>()
-            .join("\n");
-        snippets.push((file_key, hit.chunk.start_line, hit.chunk.end_line, snippet));
-        if snippets.len() >= 6 {
-            break;
-        }
-    }
-
-    if snippets.is_empty() {
-        println!("No evidence found for query: {}", query);
-        return Ok(());
-    }
-
-    let prompt = build_evidence_prompt(query, &snippets);
-    let max_toks = max_tokens.unwrap_or_else(|| ctx.config.llm.max_tokens);
-    let llm = crate::commands::llm::OpenAiClient::from_config(&ctx.config.llm)?;
-    let answer = llm.complete(&prompt, max_toks).await?;
-
-    if json {
-        let payload = serde_json::json!({
-            "answer": answer.trim(),
-            "evidence": snippets.iter().map(|(path, start, end, snippet)| serde_json::json!({
-                "path": path,
-                "start": start,
-                "end": end,
-                "snippet": snippet,
-            })).collect::<Vec<_>>(),
-        });
-        println!("{}", serde_json::to_string_pretty(&payload)?);
-        return Ok(());
-    }
-
-    if matches!(output, OutputLevel::Detailed | OutputLevel::Progress) {
-        println!("\nAnswer:\n{}\n", render_markdown_answer(answer.trim()));
+    if subgraph.nodes.is_empty() || (subgraph.nodes.len() == 1 && subgraph.nodes[0].id == node_id) {
+        println!("No neighbors found for '{}'", node_id);
     } else {
-        println!("{}", answer.trim());
+        print_subgraph(&subgraph, &node_id);
     }
-    if matches!(output, OutputLevel::Detailed) {
-        println!("Evidence:\n");
-        for (i, (path, start, end, snippet)) in snippets.iter().enumerate() {
-            println!("[{}] {}:{}-{}", i + 1, path, start, end);
-            println!("{}\n", snippet);
-        }
-    }
+
     Ok(())
 }
 
-fn build_evidence_prompt(query: &str, snippets: &[(String, usize, usize, String)]) -> String {
-    let mut evidence = String::new();
-    for (i, (path, start, end, snippet)) in snippets.iter().enumerate() {
-        evidence.push_str(&format!(
-            "[{}] {}:{}-{}\n{}\n\n",
-            i + 1,
-            path,
-            start,
-            end,
-            snippet
-        ));
+fn build_incoming_subgraph(
+    graph: &CodeGraph,
+    start: &str,
+    _relation_types: &[RelationType],
+    max_hops: u8,
+) -> Result<GraphSubgraph> {
+    use coderet_graph::graph::{Edge, GraphEdgeInfo, GraphNodeInfo};
+
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+    let mut visited = HashSet::new();
+
+    // Add start node
+    if let Some(start_node) = graph.get_node(start)? {
+        nodes.push(GraphNodeInfo {
+            id: start_node.id.clone(),
+            kind: start_node.kind.clone(),
+            label: start_node.label.clone(),
+            file_path: Some(start_node.file_path.clone()),
+        });
+        visited.insert(start_node.id.clone());
     }
-    format!(
-        "You answer questions about this codebase using only the provided code snippets.\n\
-Question: {}\n\n\
-Evidence:\n{}\n\
-Answer the question concisely. Cite file paths and line ranges. If the evidence is insufficient, say so.",
-        query, evidence
-    )
+
+    // BFS for incoming edges
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back((start.to_string(), 0u8));
+
+    while let Some((cur, depth)) = queue.pop_front() {
+        if depth >= max_hops {
+            continue;
+        }
+
+        // Get label of current node
+        let cur_label = graph.get_node(&cur)?.map(|n| n.label).unwrap_or_default();
+
+        // Get all edges and filter for incoming ones manually
+        let all_edges = graph.get_all_edges()?;
+        for edge in all_edges {
+            // Check if edge targets this node by ID or by Label
+            if edge.target == cur || (!cur_label.is_empty() && edge.target == cur_label) {
+                edges.push(GraphEdgeInfo {
+                    src: edge.source.clone(),
+                    dst: edge.target.clone(),
+                    relation: edge.kind.clone(),
+                });
+
+                if visited.insert(edge.source.clone()) {
+                    if let Some(node) = graph.get_node(&edge.source)? {
+                        nodes.push(GraphNodeInfo {
+                            id: node.id.clone(),
+                            kind: node.kind.clone(),
+                            label: node.label.clone(),
+                            file_path: Some(node.file_path.clone()),
+                        });
+                        queue.push_back((edge.source.clone(), depth + 1));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(GraphSubgraph { nodes, edges })
 }
 
-pub fn handle_status(config_path: Option<&Path>) -> Result<()> {
+fn build_both_subgraph(
+    graph: &CodeGraph,
+    start: &str,
+    relation_types: &[RelationType],
+    max_hops: u8,
+) -> Result<GraphSubgraph> {
+    let outgoing = graph.neighbors_subgraph(start, relation_types, max_hops)?;
+    let incoming = build_incoming_subgraph(graph, start, relation_types, max_hops)?;
+
+    let mut all_nodes = outgoing.nodes;
+    let mut all_edges = outgoing.edges;
+
+    for node in incoming.nodes {
+        if !all_nodes.iter().any(|n| n.id == node.id) {
+            all_nodes.push(node);
+        }
+    }
+
+    for edge in incoming.edges {
+        if !all_edges.iter().any(|e| e.src == edge.src && e.dst == edge.dst) {
+            all_edges.push(edge);
+        }
+    }
+
+    Ok(GraphSubgraph {
+        nodes: all_nodes,
+        edges: all_edges,
+    })
+}
+
+fn print_subgraph(subgraph: &coderet_graph::graph::GraphSubgraph, source_node: &str) {
+    let neighbors: Vec<_> = subgraph
+        .nodes
+        .iter()
+        .filter(|n| n.id != source_node)
+        .collect();
+
+    println!(
+        "\nFound {} neighbors for '{}':",
+        neighbors.len(),
+        source_node
+    );
+
+    for (i, node) in neighbors.iter().enumerate() {
+        println!("{}: {} ({})", i + 1, node.label, node.id);
+    }
+
+    if !subgraph.edges.is_empty() {
+        println!("\nEdges:");
+        for edge in &subgraph.edges {
+            println!("  - {} -[{}]-> {}", edge.src, edge.relation, edge.dst);
+        }
+    }
+}
+
+pub async fn handle_status(config_path: Option<&Path>) -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     let ctx = rt.block_on(agent_context::RepoContext::from_env(config_path))?;
     let root = ctx.root.clone();
@@ -1054,8 +1050,8 @@ pub fn handle_status(config_path: Option<&Path>) -> Result<()> {
     );
 
     if store_exists {
-        if let Ok(db) = sled::open(index_dir.join("store.db")) {
-            if let Ok(file_store) = FileStore::new(db) {
+        if let Ok(store) = coderet_store::Store::open(&index_dir.join("store.db")) {
+            if let Ok(file_store) = FileStore::new(store) {
                 if let Ok(files) = file_store.list_metadata() {
                     println!("Files tracked: {}", files.len());
                 }
@@ -1065,13 +1061,15 @@ pub fn handle_status(config_path: Option<&Path>) -> Result<()> {
 
     // Show recent commit log entries for lineage
     if store_exists {
-        let db = sled::open(index_dir.join("store.db"))?;
-        let commit_log = CommitLog::new(db)?;
-        if let Ok(entries) = commit_log.list(5) {
-            if !entries.is_empty() {
-                println!("Recent index commits:");
-                for entry in entries {
-                    println!(" - {} @ {} {}", entry.id, entry.timestamp, entry.note);
+        if let Ok(store) = coderet_store::Store::open(&index_dir.join("store.db")) {
+            if let Ok(commit_log) = CommitLog::new(store) {
+                if let Ok(entries) = commit_log.list(5) {
+                    if !entries.is_empty() {
+                        println!("Recent index commits:");
+                        for entry in entries {
+                            println!(" - {} @ {} {}", entry.id, entry.timestamp, entry.note);
+                        }
+                    }
                 }
             }
         }
@@ -1087,6 +1085,7 @@ struct IndexStats {
     removed_files: usize,
     skipped_files: usize,
 }
+
 fn build_single_globset(pattern: Option<&str>) -> Option<GlobSet> {
     let pat = pattern?;
     let mut builder = GlobSetBuilder::new();

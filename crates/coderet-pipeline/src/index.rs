@@ -8,7 +8,7 @@ use coderet_core::traits::Embedder;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 /// Input for indexing a single file.
 #[derive(Clone)]
@@ -173,6 +173,10 @@ fn prepare_file(
                 }
             })
             .unwrap_or(source_chunk.clone());
+        println!(
+            "DEBUG(prepare_file): Processing call: name='{}', line={}, source_chunk='{}', caller_node='{}'",
+            c.name, c.line, source_chunk, caller_node
+        );
         call_edges.push((caller_node, c.name));
     }
     for imp in imports {

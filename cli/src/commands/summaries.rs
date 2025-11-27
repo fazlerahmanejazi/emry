@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use crate::commands::index_pipeline::compute_hash;
+use coderet_pipeline::index::compute_hash;
 
 pub async fn maybe_generate_summaries(
     config: &Config,

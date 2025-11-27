@@ -1,18 +1,18 @@
+use crate::storage::{Store, Tree};
 use anyhow::Result;
 use sha2::{Digest, Sha256};
-use sled::Db;
 
 /// Content-addressable storage for full file blobs to support dedup/versioning.
 pub struct FileBlobStore {
-    blobs: sled::Tree,
-    path_to_hash: sled::Tree,
+    blobs: Tree,
+    path_to_hash: Tree,
 }
 
 impl FileBlobStore {
-    pub fn new(db: Db) -> Result<Self> {
+    pub fn new(store: Store) -> Result<Self> {
         Ok(Self {
-            blobs: db.open_tree("file_blobs")?,
-            path_to_hash: db.open_tree("file_path_hash")?,
+            blobs: store.open_tree("file_blobs")?,
+            path_to_hash: store.open_tree("file_path_hash")?,
         })
     }
 
@@ -29,7 +29,7 @@ impl FileBlobStore {
 
     pub fn get_by_hash(&self, hash: &str) -> Result<Option<String>> {
         if let Some(bytes) = self.blobs.get(hash.as_bytes())? {
-            let s = String::from_utf8(bytes.to_vec()).unwrap_or_default();
+            let s = String::from_utf8(bytes).unwrap_or_default();
             return Ok(Some(s));
         }
         Ok(None)
@@ -40,7 +40,7 @@ impl FileBlobStore {
         if let Some(hash) = self
             .path_to_hash
             .get(path_str.as_bytes())?
-            .and_then(|b| String::from_utf8(b.to_vec()).ok())
+            .and_then(|b| String::from_utf8(b).ok())
         {
             return self.get_by_hash(&hash);
         }

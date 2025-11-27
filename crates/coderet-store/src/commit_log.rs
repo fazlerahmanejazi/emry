@@ -1,6 +1,6 @@
+use crate::storage::{Store, Tree};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sled::Db;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitEntry {
@@ -10,13 +10,13 @@ pub struct CommitEntry {
 }
 
 pub struct CommitLog {
-    log: sled::Tree,
+    log: Tree,
 }
 
 impl CommitLog {
-    pub fn new(db: Db) -> Result<Self> {
+    pub fn new(store: Store) -> Result<Self> {
         Ok(Self {
-            log: db.open_tree("commit_log")?,
+            log: store.open_tree("commit_log")?,
         })
     }
 

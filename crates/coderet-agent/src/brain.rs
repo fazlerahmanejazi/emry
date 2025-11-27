@@ -1,6 +1,6 @@
 use crate::llm::{Message, ModelProvider};
 use anyhow::Result;
-use coderet_index::manager::IndexManager;
+use coderet_pipeline::manager::IndexManager;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -73,18 +73,7 @@ impl<P: ModelProvider> Brain<P> {
 
     async fn decide_next_step(&self) -> Result<AgentState> {
         // Construct system prompt with tools
-        let system_prompt = r#"You are a code retrieval assistant. You have access to the following tools:
-- search(query: str): Search the codebase for relevant code chunks.
-- read_file(path: str): Read the content of a file.
-- list_files(path: str): List files in a directory.
-
-Response Format:
-If you want to call a tool, respond with:
-TOOL: <tool_name> <json_args>
-
-If you have the final answer, respond with:
-ANSWER: <your answer>
-"#;
+        let system_prompt = crate::prompts::BRAIN_SYSTEM_PROMPT;
 
         let mut messages = vec![Message {
             role: "system".to_string(),

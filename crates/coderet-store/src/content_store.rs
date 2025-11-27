@@ -1,15 +1,15 @@
+use crate::storage::{Store, Tree};
 use anyhow::Result;
-use sled::Db;
 
 /// Content-addressable storage for chunk bodies. Keeps metadata elsewhere (ChunkStore).
 pub struct ContentStore {
-    content_tree: sled::Tree,
+    content_tree: Tree,
 }
 
 impl ContentStore {
-    pub fn new(db: Db) -> Result<Self> {
+    pub fn new(store: Store) -> Result<Self> {
         Ok(Self {
-            content_tree: db.open_tree("chunk_content")?,
+            content_tree: store.open_tree("chunk_content")?,
         })
     }
 
@@ -25,7 +25,7 @@ impl ContentStore {
 
     pub fn get(&self, hash: &str) -> Result<Option<String>> {
         if let Some(bytes) = self.content_tree.get(hash.as_bytes())? {
-            let s = String::from_utf8(bytes.to_vec()).unwrap_or_default();
+            let s = String::from_utf8(bytes).unwrap_or_default();
             Ok(Some(s))
         } else {
             Ok(None)

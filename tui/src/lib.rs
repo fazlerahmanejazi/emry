@@ -22,17 +22,18 @@ use coderet_config::Config;
 use coderet_core::ranking::RankConfig;
 use coderet_graph::graph::CodeGraph;
 use coderet_index::lexical::LexicalIndex;
-use coderet_index::manager::IndexManager;
+use coderet_pipeline::manager::IndexManager;
 use coderet_index::vector::VectorIndex;
 use coderet_store::chunk_store::ChunkStore;
 use coderet_store::file_store::FileStore;
 use coderet_store::relation_store::RelationStore;
+use coderet_store::storage::Store;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 // Agent imports
-use coderet_agent::agent::AskAgent;
-use coderet_agent::context::RepoContext;
+use coderet_agent::agent_loop::AgentLoop;
+use coderet_context::RepoContext;
 
 pub async fn run_tui() -> Result<()> {
     // Initialize index manager once
@@ -45,14 +46,14 @@ pub async fn run_tui() -> Result<()> {
         ));
     }
 
-    let db = sled::open(index_dir.join("store.db"))?;
-    let file_store = Arc::new(FileStore::new(db.clone())?);
-    let chunk_store = Arc::new(ChunkStore::new(db.clone())?);
-    let relation_store = Arc::new(RelationStore::new(db.clone())?);
-    let graph = Arc::new(CodeGraph::new(db.clone())?);
-    let content_store = Arc::new(coderet_store::content_store::ContentStore::new(db.clone())?);
+    let store = Store::open(&index_dir.join("store.db"))?;
+    let file_store = Arc::new(FileStore::new(store.clone())?);
+    let chunk_store = Arc::new(ChunkStore::new(store.clone())?);
+    let relation_store = Arc::new(RelationStore::new(store.clone())?);
+    let graph = Arc::new(CodeGraph::new(store.clone())?);
+    let content_store = Arc::new(coderet_store::content_store::ContentStore::new(store.clone())?);
     let file_blob_store = Arc::new(coderet_store::file_blob_store::FileBlobStore::new(
-        db.clone(),
+        store.clone(),
     )?);
 
     let lexical = Arc::new(LexicalIndex::new(&index_dir.join("lexical"))?);
@@ -178,38 +179,45 @@ async fn handle_query(
 async fn handle_agent_query(query: &str) -> Result<String> {
     // Initialize agent
     let ctx = Arc::new(RepoContext::from_env(None).await?);
-    let agent = AskAgent::new(ctx.clone())?;
+    
+    let index_dir = ctx.index_dir.clone();
+    let manager = Arc::new(IndexManager::new(
+        Arc::new(LexicalIndex::new(&index_dir.join("lexical"))?),
+        Arc::new(Mutex::new(VectorIndex::new(&index_dir.join("vector.lance")).await?)),
+        ctx.embedder.clone(),
+        ctx.file_store.clone(),
+        ctx.chunk_store.clone(),
+        ctx.content_store.clone(),
+        ctx.file_blob_store.clone(),
+        ctx.relation_store.clone(),
+        ctx.graph.clone(),
+        Some(ctx.summary_index.clone()),
+    ));
+
+    let agent = AgentLoop::new(ctx.clone(), manager)?;
 
     // Execute agent query
-    let result = agent
-        .answer_question(query, ctx.config.search.top_k, false)
-        .await?;
+    let result = agent.run(query, false).await?;
 
     // Format result
     let mut out = String::new();
-    out.push_str(&format!("\n=== Agent Answer ===\n{}\n", result.answer));
+    out.push_str(&format!("\n=== Agent Answer ===\n{}\n", result.final_answer));
 
-    out.push_str("\n=== Plan ===\n");
-    for (i, step) in result.plan.steps.iter().enumerate() {
-        out.push_str(&format!(
-            "{}. {} ({})\n",
-            i + 1,
-            step.action,
-            step.description
-        ));
-    }
-
-    out.push_str(&format!(
-        "\n=== Observations: {} ===\n",
-        result.observations.len()
-    ));
-    for (i, obs) in result.observations.iter().take(3).enumerate() {
-        out.push_str(&format!(
-            "{}.  {} ({} evidence items)\n",
-            i + 1,
-            obs.action,
-            obs.evidence.len()
-        ));
+    out.push_str("\n=== Trace ===\n");
+    for (i, turn) in result.turns.iter().enumerate() {
+        out.push_str(&format!("{}. Thought: {}\n", i + 1, turn.thought));
+        if let Some(tool) = &turn.tool_call {
+            out.push_str(&format!("   Action: {} {:?}\n", tool.tool_name, tool.args));
+        }
+        if let Some(obs) = &turn.observation {
+            let snippet = if obs.len() > 100 {
+                format!("{}\
+...", &obs[..100])
+            } else {
+                obs.clone()
+            };
+            out.push_str(&format!("   Observation: {}\n", snippet));
+        }
     }
 
     Ok(out)
@@ -234,7 +242,7 @@ fn rank_cfg(config: &Config) -> RankConfig {
 }
 
 fn draw_ui(f: &mut Frame<'_>, app: &App) {
-    let chunks = Layout::default()
+    let chunks = Layout::default() 
         .direction(Direction::Vertical)
         .margin(1)
         .constraints(
@@ -296,7 +304,7 @@ fn draw_ui(f: &mut Frame<'_>, app: &App) {
         if let Some(plan) = &app.agent_plan {
             messages.insert(
                 0,
-                Line::from(vec![
+                Line::from(vec![ 
                     Span::styled(
                         "Plan: ",
                         Style::default()
@@ -310,7 +318,7 @@ fn draw_ui(f: &mut Frame<'_>, app: &App) {
         if !app.agent_observations.is_empty() {
             messages.insert(
                 0,
-                Line::from(vec![
+                Line::from(vec![ 
                     Span::styled(
                         format!("Observations: {} ", app.agent_observations.len()),
                         Style::default()

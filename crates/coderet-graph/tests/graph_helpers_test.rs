@@ -1,9 +1,19 @@
 use coderet_graph::graph::CodeGraph;
 use coderet_store::relation_store::RelationType;
+use coderet_store::storage::Store;
 
 fn build_graph() -> CodeGraph {
     let db = sled::Config::new().temporary(true).open().unwrap();
-    let graph = CodeGraph::new(db).unwrap();
+    // Wrap raw sled db into our Store abstraction
+    // We need to bypass the Store::open(Path) constructor since we have an in-memory/temp DB
+    // But our Store struct is opaque and only has `open(Path)`.
+    // We need to add a constructor to `Store` that accepts `sled::Db` or use a temp file path.
+    
+    // Easier path: use tempfile crate to get a path, then use Store::open
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    
+    let graph = CodeGraph::new(store).unwrap();
     graph
         .add_node(coderet_graph::graph::GraphNode {
             id: "A".to_string(),

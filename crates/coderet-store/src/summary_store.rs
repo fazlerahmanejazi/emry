@@ -1,16 +1,16 @@
+use crate::storage::{Store, Tree};
 use anyhow::Result;
 use coderet_core::models::Summary;
-use sled::Db;
 
 /// Sled-backed storage for summaries keyed by target + level to avoid duplicates.
 pub struct SummaryStore {
-    tree: sled::Tree,
+    tree: Tree,
 }
 
 impl SummaryStore {
-    pub fn new(db: Db) -> Result<Self> {
+    pub fn new(store: Store) -> Result<Self> {
         Ok(Self {
-            tree: db.open_tree("summaries")?,
+            tree: store.open_tree("summaries")?,
         })
     }
 
@@ -26,13 +26,11 @@ impl SummaryStore {
     }
 
     pub fn put_many(&self, summaries: &[Summary]) -> Result<()> {
-        let mut batch = sled::Batch::default();
         for s in summaries {
             let key = Self::key_for(s);
             let bytes = bincode::serialize(s)?;
-            batch.insert(key.as_bytes(), bytes);
+            self.tree.insert(key.as_bytes(), bytes)?;
         }
-        self.tree.apply_batch(batch)?;
         Ok(())
     }
 
@@ -41,16 +39,20 @@ impl SummaryStore {
             return Ok(());
         }
         let target_set: std::collections::HashSet<String> = targets.iter().cloned().collect();
-        let mut batch = sled::Batch::default();
+        let mut keys_to_remove = Vec::new();
+        
         for item in self.tree.iter() {
             let (key, val) = item?;
             if let Ok(summary) = bincode::deserialize::<Summary>(&val) {
                 if target_set.contains(&summary.target_id) {
-                    batch.remove(key);
+                    keys_to_remove.push(key);
                 }
             }
         }
-        self.tree.apply_batch(batch)?;
+        
+        for k in keys_to_remove {
+            self.tree.remove(k)?;
+        }
         Ok(())
     }
 
@@ -62,18 +64,22 @@ impl SummaryStore {
             .iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
-        let mut batch = sled::Batch::default();
+        let mut keys_to_remove = Vec::new();
+
         for item in self.tree.iter() {
             let (key, val) = item?;
             if let Ok(summary) = bincode::deserialize::<Summary>(&val) {
                 if let Some(fp) = &summary.file_path {
                     if set.contains(&fp.to_string_lossy().to_string()) {
-                        batch.remove(key);
+                        keys_to_remove.push(key);
                     }
                 }
             }
         }
-        self.tree.apply_batch(batch)?;
+        
+        for k in keys_to_remove {
+            self.tree.remove(k)?;
+        }
         Ok(())
     }
 

@@ -1,5 +1,6 @@
 use crate::classifier::{ClassifiedQuery, QueryClassifier, QueryDifficulty, QueryIntent};
-use crate::context::RepoContext;
+use coderet_context::RepoContext;
+use coderet_pipeline::manager::IndexManager;
 use crate::executor::{ExecutionResult, Executor, Observation};
 use crate::llm::OpenAIProvider;
 use crate::planner::{Plan, Planner};
@@ -44,7 +45,7 @@ pub struct AgentAnswer {
 }
 
 impl AskAgent {
-    pub fn new(ctx: Arc<RepoContext>) -> Result<Self> {
+    pub fn new(ctx: Arc<RepoContext>, manager: Arc<IndexManager>) -> Result<Self> {
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| anyhow!("OPENAI_API_KEY not set for agent LLM"))?;
         let model = ctx.config.llm.model.clone();
@@ -60,7 +61,7 @@ impl AskAgent {
         Ok(Self {
             classifier: QueryClassifier::new(llm_cls),
             planner: Planner::new(llm_plan),
-            executor: Executor::new(ctx.clone()),
+            executor: Executor::new(ctx.clone(), manager),
             synthesizer: Synthesizer::new(llm_syn),
             config: ctx.config.agent.clone(),
         })

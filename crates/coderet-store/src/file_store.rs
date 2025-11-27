@@ -1,6 +1,6 @@
+use crate::storage::{Store, Tree};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sled::Db;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -14,22 +14,22 @@ pub struct FileMetadata {
 }
 
 pub struct FileStore {
-    files_tree: sled::Tree,
-    path_to_id_tree: sled::Tree,
-    hash_to_id_tree: sled::Tree,
+    files_tree: Tree,
+    path_to_id_tree: Tree,
+    hash_to_id_tree: Tree,
     next_id: AtomicU64,
 }
 
 impl FileStore {
-    pub fn new(db: Db) -> Result<Self> {
-        let files_tree = db.open_tree("files")?;
-        let path_to_id_tree = db.open_tree("path_to_id")?;
-        let hash_to_id_tree = db.open_tree("hash_to_id")?;
+    pub fn new(store: Store) -> Result<Self> {
+        let files_tree = store.open_tree("files")?;
+        let path_to_id_tree = store.open_tree("path_to_id")?;
+        let hash_to_id_tree = store.open_tree("hash_to_id")?;
 
         // Initialize next_id
         let last_id = files_tree
             .last()?
-            .map(|(k, _)| u64::from_be_bytes(k.as_ref().try_into().unwrap()))
+            .map(|(k, _)| u64::from_be_bytes(k.as_slice().try_into().unwrap()))
             .unwrap_or(0);
 
         Ok(Self {
@@ -43,14 +43,14 @@ impl FileStore {
     pub fn get_or_create_file_id(&self, path: &Path, content_hash: &str) -> Result<u64> {
         // Prefer hash-based ID to allow dedup across moves.
         if let Some(id_bytes) = self.hash_to_id_tree.get(content_hash.as_bytes())? {
-            let id = u64::from_be_bytes(id_bytes.as_ref().try_into()?);
+            let id = u64::from_be_bytes(id_bytes.as_slice().try_into()?);
             self.path_to_id_tree
                 .insert(path.to_string_lossy().as_bytes(), &id.to_be_bytes())?;
             return Ok(id);
         }
         let path_str = path.to_string_lossy();
         if let Some(id_bytes) = self.path_to_id_tree.get(path_str.as_bytes())? {
-            return Ok(u64::from_be_bytes(id_bytes.as_ref().try_into()?));
+            return Ok(u64::from_be_bytes(id_bytes.as_slice().try_into()?));
         }
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
@@ -61,8 +61,9 @@ impl FileStore {
         Ok(id)
     }
 
-    pub fn update_file_metadata(&self, id: u64, metadata: &FileMetadata) -> Result<()> {
-        let bytes = bincode::serialize(metadata)?;
+    pub fn update_file_metadata(&self, metadata: FileMetadata) -> Result<()> {
+        let id = metadata.id;
+        let bytes = bincode::serialize(&metadata)?;
         self.files_tree.insert(&id.to_be_bytes(), bytes)?;
         self.hash_to_id_tree
             .insert(metadata.content_hash.as_bytes(), &id.to_be_bytes())?;
@@ -75,7 +76,7 @@ impl FileStore {
             let (key_bytes, val_bytes) = item?;
             if let Ok(meta) = bincode::deserialize::<FileMetadata>(&val_bytes) {
                 if meta.path.to_string_lossy() == path {
-                    return Ok(u64::from_be_bytes(key_bytes.as_ref().try_into()?));
+                    return Ok(u64::from_be_bytes(key_bytes.as_slice().try_into()?));
                 }
             }
         }
@@ -98,7 +99,7 @@ impl FileStore {
     pub fn get_file_id(&self, path: &Path) -> Result<Option<u64>> {
         let path_str = path.to_string_lossy();
         if let Some(id_bytes) = self.path_to_id_tree.get(path_str.as_bytes())? {
-            Ok(Some(u64::from_be_bytes(id_bytes.as_ref().try_into()?)))
+            Ok(Some(u64::from_be_bytes(id_bytes.as_slice().try_into()?)))
         } else {
             Ok(None)
         }
@@ -118,7 +119,7 @@ impl FileStore {
     pub fn delete_file(&self, path: &Path) -> Result<()> {
         let path_str = path.to_string_lossy();
         if let Some(id_bytes) = self.path_to_id_tree.remove(path_str.as_bytes())? {
-            let id = u64::from_be_bytes(id_bytes.as_ref().try_into()?);
+            let id = u64::from_be_bytes(id_bytes.as_slice().try_into()?);
             let _ = self.files_tree.remove(&id.to_be_bytes())?;
         }
         Ok(())
@@ -126,7 +127,7 @@ impl FileStore {
 
     pub fn get_id_by_hash(&self, hash: &str) -> Result<Option<u64>> {
         if let Some(id_bytes) = self.hash_to_id_tree.get(hash.as_bytes())? {
-            return Ok(Some(u64::from_be_bytes(id_bytes.as_ref().try_into()?)));
+            return Ok(Some(u64::from_be_bytes(id_bytes.as_slice().try_into()?)));
         }
         Ok(None)
     }

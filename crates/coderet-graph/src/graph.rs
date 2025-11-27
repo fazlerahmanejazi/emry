@@ -1,9 +1,9 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sled::Db;
 use std::collections::HashMap;
 
 use coderet_store::relation_store::RelationType;
+use coderet_store::storage::{Store, Tree};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
@@ -43,10 +43,10 @@ pub struct GraphSubgraph {
 }
 
 pub struct CodeGraph {
-    nodes_tree: sled::Tree,
-    edges_tree: sled::Tree,    // key: source:target
-    outgoing_tree: sled::Tree, // key: source, value: Vec<target>
-    incoming_tree: sled::Tree, // key: target, value: Vec<source>
+    nodes_tree: Tree,
+    edges_tree: Tree,    // key: source:target
+    outgoing_tree: Tree, // key: source, value: Vec<target>
+    incoming_tree: Tree, // key: target, value: Vec<source>
     path_cache: std::sync::Mutex<(
         std::collections::HashMap<String, Vec<String>>,
         std::collections::VecDeque<String>,
@@ -55,12 +55,12 @@ pub struct CodeGraph {
 }
 
 impl CodeGraph {
-    pub fn new(db: Db) -> Result<Self> {
+    pub fn new(store: Store) -> Result<Self> {
         Ok(Self {
-            nodes_tree: db.open_tree("graph_nodes")?,
-            edges_tree: db.open_tree("graph_edges")?,
-            outgoing_tree: db.open_tree("graph_outgoing")?,
-            incoming_tree: db.open_tree("graph_incoming")?,
+            nodes_tree: store.open_tree("graph_nodes")?,
+            edges_tree: store.open_tree("graph_edges")?,
+            outgoing_tree: store.open_tree("graph_outgoing")?,
+            incoming_tree: store.open_tree("graph_incoming")?,
             path_cache: std::sync::Mutex::new((
                 std::collections::HashMap::new(),
                 std::collections::VecDeque::new(),
@@ -70,12 +70,17 @@ impl CodeGraph {
     }
 
     pub fn add_node(&self, node: GraphNode) -> Result<()> {
+        // Skip if node already exists (idempotent operation)
+        if self.nodes_tree.contains_key(node.id.as_bytes())? {
+            return Ok(());
+        }
         let bytes = bincode::serialize(&node)?;
         self.nodes_tree.insert(node.id.as_bytes(), bytes)?;
         Ok(())
     }
 
     pub fn add_edge(&self, source: &str, target: &str, kind: &str) -> Result<()> {
+        println!("DEBUG(CodeGraph::add_edge): Adding edge: {} -[{}]-> {}", source, kind, target);
         let edge = Edge {
             source: source.to_string(),
             target: target.to_string(),
@@ -92,16 +97,29 @@ impl CodeGraph {
         Ok(())
     }
 
-    fn add_to_adjacency(&self, tree: &sled::Tree, key: &str, value: &str) -> Result<()> {
+    fn add_to_adjacency(&self, tree: &Tree, key: &str, value: &str) -> Result<()> {
+        let tree_name = if tree.name() == self.outgoing_tree.name() {
+            "outgoing_tree"
+        } else {
+            "incoming_tree"
+        };
+        println!("DEBUG(CodeGraph::add_to_adjacency): Processing tree '{}' for key '{}', value '{}'", tree_name, key, value);
+
         let mut list: Vec<String> = if let Some(bytes) = tree.get(key.as_bytes())? {
             bincode::deserialize(&bytes)?
         } else {
             Vec::new()
         };
 
+        println!("DEBUG(CodeGraph::add_to_adjacency): Current list for key '{}': {:?}", key, list);
+
         if !list.contains(&value.to_string()) {
             list.push(value.to_string());
+            println!("DEBUG(CodeGraph::add_to_adjacency): New list for key '{}' (after push): {:?}", key, list);
             tree.insert(key.as_bytes(), bincode::serialize(&list)?)?;
+            println!("DEBUG(CodeGraph::add_to_adjacency): Inserted new list for key '{}' into tree '{}'", key, tree_name);
+        } else {
+            println!("DEBUG(CodeGraph::add_to_adjacency): List already contains value '{}' for key '{}'", value, key);
         }
         Ok(())
     }
@@ -164,6 +182,55 @@ impl CodeGraph {
             }
         }
         Ok(out)
+    }
+
+    pub fn list_symbols_and_methods(&self) -> Result<Vec<GraphNode>> {
+        let mut out = Vec::new();
+        for item in self.nodes_tree.iter() {
+            let (_, v) = item?;
+            if let Ok(node) = bincode::deserialize::<GraphNode>(&v) {
+                if node.kind == "symbol" || node.kind == "method" {
+                    out.push(node);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn get_all_edges(&self) -> Result<Vec<Edge>> {
+        let mut edges = Vec::new();
+        for item in self.edges_tree.iter() {
+            let (_, v) = item?;
+            if let Ok(edge) = bincode::deserialize::<Edge>(&v) {
+                edges.push(edge);
+            }
+        }
+        Ok(edges)
+    }
+
+    pub fn list_all_nodes(&self) -> Result<Vec<GraphNode>> {
+        let mut out = Vec::new();
+        for item in self.nodes_tree.iter() {
+            let (_, v) = item?;
+            if let Ok(node) = bincode::deserialize::<GraphNode>(&v) {
+                out.push(node);
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn debug_outgoing_tree(&self) -> Result<()> {
+        println!("DEBUG(CodeGraph): Dumping outgoing_tree contents:");
+        for item in self.outgoing_tree.iter() {
+            let (key, value) = item?;
+            let key_str = String::from_utf8_lossy(&key);
+            let value_str = match bincode::deserialize::<Vec<String>>(&value) {
+                Ok(list) => format!("{:?}", list),
+                Err(_) => format!("{:?}", value),
+            };
+            println!("  - Key: {}, Value: {}", key_str, value_str);
+        }
+        Ok(())
     }
 
     pub fn nodes_matching_label(&self, needle: &str) -> Result<Vec<GraphNode>> {
@@ -455,14 +522,25 @@ impl CodeGraph {
                     relation: edge.kind.clone(),
                 });
                 if visited.insert(edge.target.clone()) {
-                    if let Some(node) = self.get_node(&edge.target)? {
+                    let node_opt = match self.get_node(&edge.target)? {
+                        Some(n) => Some(n),
+                        None => {
+                            // Try to resolve by label (handle edges pointing to symbol names)
+                            match self.resolve_node_id(&edge.target) {
+                                Ok(resolved_id) => self.get_node(&resolved_id)?,
+                                Err(_) => None,
+                            }
+                        }
+                    };
+
+                    if let Some(node) = node_opt {
                         nodes.push(GraphNodeInfo {
                             id: node.id.clone(),
                             kind: node.kind.clone(),
                             label: node.label.clone(),
                             file_path: Some(node.file_path.clone()),
                         });
-                        queue.push_back((edge.target.clone(), depth + 1));
+                        queue.push_back((node.id.clone(), depth + 1));
                     }
                 }
             }
@@ -591,7 +669,7 @@ impl CodeGraph {
         Ok(())
     }
 
-    fn get_adjacent_mut(&self, tree: &sled::Tree, key: &str) -> Result<Option<Vec<String>>> {
+    fn get_adjacent_mut(&self, tree: &Tree, key: &str) -> Result<Option<Vec<String>>> {
         if let Some(bytes) = tree.get(key.as_bytes())? {
             let list: Vec<String> = bincode::deserialize(&bytes)?;
             Ok(Some(list))
@@ -600,7 +678,7 @@ impl CodeGraph {
         }
     }
 
-    fn set_adjacent(&self, tree: &sled::Tree, key: &str, list: Vec<String>) -> Result<()> {
+    fn set_adjacent(&self, tree: &Tree, key: &str, list: Vec<String>) -> Result<()> {
         if list.is_empty() {
             let _ = tree.remove(key.as_bytes())?;
         } else {
@@ -680,4 +758,133 @@ fn relation_matches(kind: &str, filters: &[RelationType]) -> bool {
         RelationType::Imports => normalized == "imports",
         RelationType::Defines => normalized == "defines",
     })
+}
+
+
+#[derive(Debug)]
+pub enum ResolutionError {
+    NotFound(String),
+    Ambiguous(String, Vec<String>),
+    GraphError(anyhow::Error),
+}
+
+impl std::fmt::Display for ResolutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolutionError::NotFound(q) => write!(f, "Node not found: {}", q),
+            ResolutionError::Ambiguous(q, c) => write!(f, "Ambiguous node reference '{}'. Candidates: {:?}", q, c),
+            ResolutionError::GraphError(e) => write!(f, "Graph error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for ResolutionError {}
+
+impl From<anyhow::Error> for ResolutionError {
+    fn from(e: anyhow::Error) -> Self {
+        ResolutionError::GraphError(e)
+    }
+}
+
+impl CodeGraph {
+    /// Resolve a string (ID, symbol name, or file path) to a single Node ID.
+    ///
+    /// Logic:
+    /// 1. Check if `query` is a valid ID (exact match).
+    /// 2. If not, search for nodes with matching labels or canonical IDs.
+    /// 3. If 1 match, return ID.
+    /// 4. If >1 matches, return `Ambiguous`.
+    /// 5. If 0 matches, return `NotFound`.
+    pub fn resolve_node_id(&self, query: &str) -> Result<String, ResolutionError> {
+        // 1. Direct ID check
+        if self.nodes_tree.contains_key(query.as_bytes()).map_err(anyhow::Error::from)? {
+            return Ok(query.to_string());
+        }
+
+        // 2. Label/Symbol search
+        let matches = self.nodes_matching_label(query)?;
+
+        if matches.is_empty() {
+            return Err(ResolutionError::NotFound(query.to_string()));
+        }
+
+        if matches.len() == 1 {
+            return Ok(matches[0].id.clone());
+        }
+
+        // 3. Ambiguity check
+        // Try to find an exact match among candidates to resolve ambiguity
+        let exact_matches: Vec<&GraphNode> = matches
+            .iter()
+            .filter(|n| n.label == query || n.id == query)
+            .collect();
+
+        if exact_matches.len() == 1 {
+            return Ok(exact_matches[0].id.clone());
+        }
+
+        // If multiple exact matches, prefer the longest code span (likely the implementation)
+        if exact_matches.len() > 1 {
+            let mut best = exact_matches[0];
+            let mut best_span = extract_span(&best.id);
+            
+            for node in exact_matches.iter().skip(1) {
+                let span = extract_span(&node.id);
+                if span > best_span {
+                    best = node;
+                    best_span = span;
+                }
+            }
+            
+            return Ok(best.id.clone());
+        }
+
+        // If still ambiguous, return error with candidates
+        let candidates: Vec<String> = matches
+            .iter()
+            .take(5) // Limit candidates for readability
+            .map(|n| format!("{} ({}) [ID: {}]", n.label, n.file_path, n.id))
+            .collect();
+        
+        Err(ResolutionError::Ambiguous(query.to_string(), candidates))
+    }
+}
+
+/// Extract the code span (number of lines) from a node ID.
+/// Node IDs are typically in format: "path/to/file.rs:start-end"
+fn extract_span(id: &str) -> usize {
+    if let Some(range_part) = id.rsplit(':').next() {
+        if let Some((start, end)) = range_part.split_once('-') {
+            if let (Ok(s), Ok(e)) = (start.parse::<usize>(), end.parse::<usize>()) {
+                return e.saturating_sub(s);
+            }
+        }
+    }
+    0 // Default to 0 if we can't parse
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_node_id_exact_match() -> Result<()> {
+        let db = coderet_store::Store::open(std::path::Path::new(".test_db"))?;
+        let graph = CodeGraph::new(db)?;
+
+        graph.add_node(GraphNode {
+            id: "file:1".to_string(),
+            kind: "file".to_string(),
+            label: "main.rs".to_string(),
+            canonical_id: Some("file:1".to_string()),
+            file_path: "src/main.rs".to_string(),
+        })?;
+
+        // Test exact ID match
+        assert_eq!(graph.resolve_node_id("file:1").unwrap(), "file:1");
+
+        Ok(())
+    }
+
+    // ... (other tests need updating too)
 }

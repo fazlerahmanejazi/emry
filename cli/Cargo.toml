@@ -14,12 +14,13 @@ coderet-core = { path = "../crates/coderet-core" }
 coderet-config = { path = "../crates/coderet-config" }
 coderet-index = { path = "../crates/coderet-index" }
 coderet-agent = { path = "../crates/coderet-agent" }
+coderet-pipeline = { path = "../crates/coderet-pipeline" }
+coderet-context = { path = "../crates/coderet-context" }
 coderet-store = { path = "../crates/coderet-store" }
 coderet-graph = { path = "../crates/coderet-graph" }
 tui = { path = "../tui" }
 tokio = { workspace = true }
 walkdir = "2.4"
-sled = "0.34"
 globset = { workspace = true }
 reqwest = { workspace = true, features = ["json", "blocking"] }
 serde_json = { workspace = true }
@@ -31,8 +32,8 @@ ignore = { workspace = true }
 rayon = { workspace = true }
 futures = { workspace = true }
 async-trait = "0.1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 indicatif = "0.17"
 console = "0.15"
 termimad = "0.30"

@@ -20,12 +20,15 @@ pub struct OllamaProvider {
 }
 
 impl OllamaProvider {
-    pub fn new(model: String, base_url: String) -> Self {
-        Self {
+    pub fn new(model: String, base_url: String, timeout_secs: u64) -> Result<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .build()?;
+        Ok(Self {
             model,
             base_url,
-            client: reqwest::Client::new(),
-        }
+            client,
+        })
     }
 }
 
@@ -63,22 +66,28 @@ pub struct JsonSchemaSpec {
 }
 
 impl OpenAIProvider {
-    pub fn new(model: String, api_key: String) -> Self {
-        Self {
+    pub fn new(model: String, api_key: String, timeout_secs: u64) -> Result<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .build()?;
+        Ok(Self {
             model,
             api_key,
-            client: reqwest::Client::new(),
+            client,
             api_base: "https://api.openai.com/v1".to_string(),
-        }
+        })
     }
 
-    pub fn with_base(model: String, api_key: String, api_base: String) -> Self {
-        Self {
+    pub fn with_base(model: String, api_key: String, api_base: String, timeout_secs: u64) -> Result<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .build()?;
+        Ok(Self {
             model,
             api_key,
-            client: reqwest::Client::new(),
+            client,
             api_base,
-        }
+        })
     }
 
     async fn chat_inner(

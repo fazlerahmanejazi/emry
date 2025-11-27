@@ -9,7 +9,9 @@ use lance::dataset::{Dataset, WriteMode, WriteParams};
 use std::path::Path;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize}; // Added import
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)] // Added Serialize, Deserialize
 pub enum SummaryKind {
     Repo,
     Module,
@@ -18,7 +20,7 @@ pub enum SummaryKind {
     Unknown,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)] // Added Serialize, Deserialize
 pub struct SummaryRecord {
     pub kind: SummaryKind,
     pub target_id: String,

@@ -1,12 +1,12 @@
-use crate::lexical::LexicalIndex;
-use crate::summaries::SummaryIndex;
-use crate::vector::VectorIndex;
 use anyhow::{anyhow, Result};
 use coderet_core::models::{Chunk, ScoredChunk};
 use coderet_core::ranking::RankConfig;
 use coderet_core::traits::Embedder;
 use coderet_graph::graph::{CodeGraph, GraphNode};
 use coderet_graph::path::{PathBuilder, PathBuilderConfig};
+use coderet_index::lexical::LexicalIndex;
+use coderet_index::summaries::SummaryIndex;
+use coderet_index::vector::VectorIndex;
 use coderet_store::chunk_store::ChunkStore;
 use coderet_store::content_store::ContentStore;
 use coderet_store::file_blob_store::FileBlobStore;
@@ -31,16 +31,16 @@ pub struct SearchHit {
 }
 
 pub struct IndexManager {
-    lexical: Arc<LexicalIndex>,
-    vector: Arc<Mutex<VectorIndex>>, // VectorIndex is async and needs mutability for some ops
-    embedder: Option<Arc<dyn Embedder + Send + Sync>>,
-    file_store: Arc<FileStore>,
-    chunk_store: Arc<ChunkStore>,
-    content_store: Arc<ContentStore>,
-    file_blob_store: Arc<FileBlobStore>,
-    relation_store: Arc<RelationStore>,
-    graph: Arc<CodeGraph>,
-    summary: Option<Arc<Mutex<SummaryIndex>>>,
+    pub lexical: Arc<LexicalIndex>,
+    pub vector: Arc<Mutex<VectorIndex>>, // VectorIndex is async and needs mutability for some ops
+    pub embedder: Option<Arc<dyn Embedder + Send + Sync>>,
+    pub file_store: Arc<FileStore>,
+    pub chunk_store: Arc<ChunkStore>,
+    pub content_store: Arc<ContentStore>,
+    pub file_blob_store: Arc<FileBlobStore>,
+    pub relation_store: Arc<RelationStore>,
+    pub graph: Arc<CodeGraph>,
+    pub summary: Option<Arc<Mutex<SummaryIndex>>>,
 }
 
 impl IndexManager {
@@ -183,7 +183,7 @@ impl IndexManager {
                                     graph_boost: None,
                                     graph_distance: None,
                                     graph_path: Some(vec![format!(
-                                        "{} defines {}",
+                                        "{} definesજી {}",
                                         chunk.file_path.display(),
                                         node.label
                                     )]),
@@ -525,7 +525,7 @@ fn describe_path(path: &coderet_graph::path::Path) -> Vec<String> {
     for (idx, node) in path.nodes.iter().enumerate() {
         if idx < path.edges.len() {
             labels.push(format!(
-                "{} -{}-> {}",
+                "{} -{}->જી {}",
                 node.label,
                 path.edges[idx],
                 path.nodes[idx + 1].label
@@ -676,7 +676,7 @@ impl<'a> Transaction<'a> {
         for meta in self.files_to_update {
             self.manager
                 .file_store
-                .update_file_metadata(meta.id, &meta)?;
+                .update_file_metadata(meta)?;
         }
 
         // 6. Commit Graph (Sled)

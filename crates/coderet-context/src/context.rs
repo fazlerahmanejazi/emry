@@ -3,7 +3,6 @@ use anyhow::{anyhow, Context, Result};
 use coderet_config::Config;
 use coderet_graph::graph::CodeGraph;
 use coderet_index::lexical::LexicalIndex;
-use coderet_index::manager::IndexManager;
 use coderet_index::summaries::SummaryIndex as SimpleSummaryIndex;
 use coderet_index::vector::VectorIndex;
 use coderet_store::chunk_store::ChunkStore;
@@ -12,6 +11,7 @@ use coderet_store::content_store::ContentStore;
 use coderet_store::file_blob_store::FileBlobStore;
 use coderet_store::file_store::FileStore;
 use coderet_store::relation_store::RelationStore;
+use coderet_store::storage::Store;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -23,7 +23,7 @@ pub struct RepoContext {
     pub branch: String,
     pub index_dir: PathBuf,
     pub config: Config,
-    pub manager: Arc<IndexManager>,
+    // pub manager: Arc<IndexManager>, // Removed: Manager is now constructed by the consumer
     pub graph: Arc<CodeGraph>,
     pub file_store: Arc<FileStore>,
     pub content_store: Arc<ContentStore>,
@@ -33,6 +33,9 @@ pub struct RepoContext {
     pub summary_index: Arc<Mutex<SimpleSummaryIndex>>,
     pub commit_log: Option<CommitLog>,
     pub embedder: Option<Arc<dyn coderet_core::traits::Embedder + Send + Sync>>,
+    // Indices
+    pub lexical: Arc<LexicalIndex>,
+    pub vector: Arc<Mutex<VectorIndex>>,
 }
 
 impl RepoContext {
@@ -55,47 +58,33 @@ impl RepoContext {
         };
 
         let db_path = index_dir.join("store.db");
-        let db = sled::open(&db_path).context("failed to open index store")?;
+        let store = Store::open(&db_path).context("failed to open index store")?;
 
-        let file_store = Arc::new(FileStore::new(db.clone())?);
-        let content_store = Arc::new(ContentStore::new(db.clone())?);
-        let file_blob_store = Arc::new(FileBlobStore::new(db.clone())?);
-        let chunk_store = Arc::new(ChunkStore::new(db.clone())?);
-        let relation_store = Arc::new(RelationStore::new(db.clone())?);
-        let graph = Arc::new(CodeGraph::new(db.clone())?);
-        let commit_log = CommitLog::new(db.clone()).ok();
+        let file_store = Arc::new(FileStore::new(store.clone())?);
+        let content_store = Arc::new(ContentStore::new(store.clone())?);
+        let file_blob_store = Arc::new(FileBlobStore::new(store.clone())?);
+        let chunk_store = Arc::new(ChunkStore::new(store.clone())?);
+        let relation_store = Arc::new(RelationStore::new(store.clone())?);
+        let graph = Arc::new(CodeGraph::new(store.clone())?);
+        let commit_log = CommitLog::new(store.clone()).ok();
 
         let lexical = Arc::new(LexicalIndex::new(&index_dir.join("lexical"))?);
         let vector = Arc::new(Mutex::new(
             VectorIndex::new(&index_dir.join("vector.lance")).await?,
         ));
 
-        // Try to initialize embedder using config/environment.
-        let embedder = select_embedder(&config.embedding).await.ok();
-
         let summary_index = Arc::new(Mutex::new(
             SimpleSummaryIndex::new(&index_dir.join("summaries.db")).await?,
         ));
 
-        let manager = Arc::new(IndexManager::new(
-            lexical,
-            vector,
-            embedder.clone(),
-            file_store.clone(),
-            chunk_store.clone(),
-            content_store.clone(),
-            file_blob_store.clone(),
-            relation_store.clone(),
-            graph.clone(),
-            Some(summary_index.clone()),
-        ));
+        // Try to initialize embedder using config/environment.
+        let embedder = select_embedder(&config.embedding).await.ok();
 
         Ok(Self {
             root,
             branch,
             index_dir,
             config,
-            manager,
             graph,
             file_store,
             content_store,
@@ -105,6 +94,8 @@ impl RepoContext {
             summary_index,
             commit_log,
             embedder,
+            lexical,
+            vector,
         })
     }
 }

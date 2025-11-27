@@ -1,6 +1,6 @@
+use crate::storage::{Store, Tree};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sled::Db;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RelationType {
@@ -10,13 +10,13 @@ pub enum RelationType {
 }
 
 pub struct RelationStore {
-    relations_tree: sled::Tree, // key: chunk_id:target_id, value: type
+    relations_tree: Tree, // key: chunk_id:target_id, value: type
 }
 
 impl RelationStore {
-    pub fn new(db: Db) -> Result<Self> {
+    pub fn new(store: Store) -> Result<Self> {
         Ok(Self {
-            relations_tree: db.open_tree("relations")?,
+            relations_tree: store.open_tree("relations")?,
         })
     }
 
@@ -34,29 +34,33 @@ impl RelationStore {
 
     pub fn delete_by_source(&self, source_id: &str) -> Result<()> {
         let prefix = format!("{}:", source_id);
-        let mut batch = sled::Batch::default();
+        let mut keys_to_remove = Vec::new();
         for item in self.relations_tree.scan_prefix(prefix.as_bytes()) {
             let (k, _) = item?;
-            batch.remove(k);
+            keys_to_remove.push(k);
         }
-        self.relations_tree.apply_batch(batch)?;
+        for k in keys_to_remove {
+            self.relations_tree.remove(k)?;
+        }
         Ok(())
     }
 
     pub fn delete_by_target(&self, target_id: &str) -> Result<()> {
         let suffix = format!(":{}", target_id);
-        let mut batch = sled::Batch::default();
+        let mut keys_to_remove = Vec::new();
 
         for item in self.relations_tree.iter() {
             let (k, _) = item?;
-            if let Ok(key_str) = std::str::from_utf8(k.as_ref()) {
+            if let Ok(key_str) = std::str::from_utf8(&k) {
                 if key_str.ends_with(&suffix) {
-                    batch.remove(k);
+                    keys_to_remove.push(k.clone());
                 }
             }
         }
 
-        self.relations_tree.apply_batch(batch)?;
+        for k in keys_to_remove {
+            self.relations_tree.remove(k)?;
+        }
         Ok(())
     }
 
@@ -65,7 +69,7 @@ impl RelationStore {
         let prefix = format!("{}:", source_id);
         for item in self.relations_tree.scan_prefix(prefix.as_bytes()) {
             let (k, v) = item?;
-            if let Ok(key_str) = std::str::from_utf8(k.as_ref()) {
+            if let Ok(key_str) = std::str::from_utf8(&k) {
                 if let Some((_, target)) = key_str.split_once(':') {
                     let rel: RelationType = bincode::deserialize(&v)?;
                     out.push((target.to_string(), rel));
@@ -80,7 +84,7 @@ impl RelationStore {
         let suffix = format!(":{}", target_id);
         for item in self.relations_tree.iter() {
             let (k, v) = item?;
-            if let Ok(key_str) = std::str::from_utf8(k.as_ref()) {
+            if let Ok(key_str) = std::str::from_utf8(&k) {
                 if key_str.ends_with(&suffix) {
                     if let Some((source, _)) = key_str.split_once(':') {
                         let rel: RelationType = bincode::deserialize(&v)?;

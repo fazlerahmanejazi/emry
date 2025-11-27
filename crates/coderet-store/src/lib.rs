@@ -4,4 +4,7 @@ pub mod content_store;
 pub mod file_blob_store;
 pub mod file_store;
 pub mod relation_store;
+pub mod storage;
 pub mod summary_store;
+
+pub use storage::{Store, Tree};

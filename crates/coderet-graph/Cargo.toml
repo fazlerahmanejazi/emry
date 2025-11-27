@@ -4,10 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-coderet-core = { path = "../coderet-core" }
+anyhow = "1.0"
+bincode = "1.3"
 coderet-store = { path = "../coderet-store" }
-sled = "0.34"
-serde = { workspace = true }
-bincode = { workspace = true }
-anyhow = { workspace = true }
-petgraph = { workspace = true } # We might still use petgraph algorithms on top of sled
+petgraph = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3.10"

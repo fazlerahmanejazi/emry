@@ -2,7 +2,8 @@ mod commands;
 
 use anyhow::Result;
 use clap::Parser;
-use commands::{Cli, Commands};
+use commands::{Cli, Commands, GraphArgs}; // Added GraphArgs
+use tui; // Added import
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,29 +55,8 @@ async fn main() -> Result<()> {
                 1
             }
         },
-        Commands::Ask {
-            query,
-            depth,
-            agent,
-            output,
-            json,
-            max_per_step,
-            max_observations,
-            max_tokens,
-        } => {
-            match commands::handle_ask(
-                query,
-                depth,
-                agent,
-                output,
-                json,
-                max_per_step,
-                max_observations,
-                max_tokens,
-                cli.config.as_deref(),
-            )
-            .await
-            {
+        Commands::Ask { query, verbose } => {
+            match commands::handle_ask(query, verbose, cli.config.as_deref()).await {
                 Ok(_) => 0,
                 Err(e) => {
                     eprintln!("Ask failed: {}", e);
@@ -84,7 +64,14 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Status => match commands::handle_status(cli.config.as_deref()) {
+        Commands::Graph(args) => match commands::handle_graph(args, cli.config.as_deref()).await {
+            Ok(_) => 0,
+            Err(e) => {
+                eprintln!("Graph command failed: {}", e);
+                1
+            }
+        },
+        Commands::Status => match commands::handle_status(cli.config.as_deref()).await {
             Ok(_) => 0,
             Err(e) => {
                 eprintln!("Status failed: {}", e);

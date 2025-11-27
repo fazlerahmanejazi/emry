@@ -20,6 +20,10 @@ pub struct LlmConfig {
     /// Use this to point to alternative OpenAI-compatible endpoints.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_base: Option<String>,
+
+    /// Timeout for LLM API calls in seconds
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
 }
 
 impl Default for LlmConfig {
@@ -28,6 +32,7 @@ impl Default for LlmConfig {
             model: default_model(),
             max_tokens: default_max_tokens(),
             api_base: None,
+            timeout_secs: default_timeout_secs(),
         }
     }
 }
@@ -47,6 +52,13 @@ impl crate::validation::Validate for LlmConfig {
             return Err(ConfigError::ValidationError {
                 field: "llm.max_tokens".to_string(),
                 message: "max_tokens must be > 0".to_string(),
+            });
+        }
+
+        if self.timeout_secs == 0 {
+            return Err(ConfigError::ValidationError {
+                field: "llm.timeout_secs".to_string(),
+                message: "timeout_secs must be > 0".to_string(),
             });
         }
 
@@ -81,6 +93,10 @@ fn default_model() -> String {
 
 fn default_max_tokens() -> u32 {
     800
+}
+
+fn default_timeout_secs() -> u64 {
+    60
 }
 
 #[cfg(test)]
