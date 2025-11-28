@@ -1,13 +1,11 @@
 // Simplified CLI and command handlers using the new architecture.
 // Focused on correctness and robustness; supports incremental updates with hash-based detection.
-mod llm;
 mod print_snippet;
 mod regex_utils;
-mod summaries;
 
-use crate::commands::llm::LlmClient;
+
 use anyhow::Result;
-use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use coderet_agent::cortex::Cortex;
 use coderet_agent::cortex::context::AgentContext;
 use coderet_agent::cortex::tools::{
@@ -25,7 +23,7 @@ use coderet_core::scanner::scan_repo;
 use coderet_graph::graph::{CodeGraph, GraphNode, GraphSubgraph};
 use coderet_index::lexical::LexicalIndex;
 use coderet_pipeline::manager::IndexManager;
-use coderet_index::summaries::SummaryIndex as SimpleSummaryIndex;
+
 use coderet_index::vector::VectorIndex;
 use coderet_pipeline::index::{compute_hash, prepare_files_async, FileInput, PreparedFile};
 use coderet_store::chunk_store::ChunkStore;
@@ -42,10 +40,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use summaries::maybe_generate_summaries;
+
 use termimad::{FmtText, MadSkin}; // Re-adding for render_markdown_answer
 use tokio::sync::Mutex;
-use tracing::{info, warn, debug, trace};
+use tracing::{info, trace};
 use serde_json::json;
 
 #[derive(Parser)]
@@ -91,10 +89,6 @@ pub enum Commands {
         /// Search for symbol definitions (name match)
         #[arg(long)]
         symbol: bool,
-
-        /// Search summaries instead of code
-        #[arg(long)]
-        summary: bool,
 
         /// Treat query as regex (lexical/grep-style)
         #[arg(long)]
@@ -205,9 +199,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
     let vector = Arc::new(Mutex::new(
         VectorIndex::new(&index_dir.join("vector.lance")).await?,
     ));
-    let summary_index = Arc::new(Mutex::new(
-        SimpleSummaryIndex::new(&index_dir.join("summaries.db")).await?,
-    ));
+
 
     // Select embedder (optional; enables vector search if available)
     let embedder = select_embedder(&config.embedding).await.ok();
@@ -226,7 +218,6 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
         file_blob_store.clone(),
         // relation_store_arc.clone(), // Removed
         graph_arc.clone(),
-        Some(summary_index.clone()),
     ));
 
     // Scan files using config include/exclude globs and language detection.
@@ -277,7 +268,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
         if !current_paths.contains(path) {
             let ids = chunk_store.get_chunks_for_file(meta.id)?;
             stale_chunk_ids.extend(ids);
-            let file_node_id = format!("file:{}", meta.id);
+            let _file_node_id = format!("file:{}", meta.id);
             txn.delete_file_node(path.to_string_lossy().to_string());
             // let _ = relation_store_arc.delete_by_source(&file_node_id);
             file_store.delete_file(path)?;
@@ -293,7 +284,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
     let mut symbol_registry: Vec<coderet_core::models::Symbol> = Vec::new();
     let mut call_edges: Vec<(String, String)> = Vec::new(); // (caller_file_node, callee_name)
     let mut import_edges: Vec<(String, String)> = Vec::new(); // (file_node, import_name)
-    let mut file_content_map: HashMap<PathBuf, String> = HashMap::new();
+
     let mut work_items: Vec<FileInput> = Vec::new();
 
     #[derive(Clone)]
@@ -352,7 +343,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
     );
     pb.set_message("Processing files");
 
-    for (i, fr) in read_results.into_iter().enumerate() {
+    for (_i, fr) in read_results.into_iter().enumerate() {
         pb.inc(1);
 
         let (file_id, prev_meta) = match meta_by_path.get(&fr.path) {
@@ -504,9 +495,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
 
         call_edges.extend(pf.call_edges.clone().into_iter()); // Clone here
         import_edges.extend(pf.import_edges.into_iter());
-        if config.summary.enabled {
-            file_content_map.insert(pf.path.clone(), pf.content.clone());
-        }
+
 
         trace!("File: {}, Raw call_edges from prepare_file:", pf.path.display());
         for (caller, callee_name) in &pf.call_edges {
@@ -564,21 +553,6 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
     println!("Committing chunks and symbols...");
     txn.commit().await?;
 
-    println!("Generating summaries...");
-
-    let mut summary_guard = summary_index.lock().await;
-    maybe_generate_summaries(
-        &config,
-        &mut *summary_guard,
-        embedder.as_ref(),
-        &file_store,
-        &root,
-        &symbol_registry,
-        &file_content_map,
-        &removed_files,
-    )
-    .await?;
-
     // Record commit entry for basic lineage
     let note = format!(
         "Indexed files: new={}, updated={}, removed={}, skipped={}",
@@ -605,7 +579,6 @@ pub async fn handle_search(
     lang: Option<String>,
     path: Option<String>,
     symbol: bool,
-    summary: bool,
     regex: bool,
     no_ignore: bool,
 ) -> Result<()> {
@@ -615,7 +588,7 @@ pub async fn handle_search(
     let config = ctx.config.clone();
     let graph_arc = ctx.graph.clone();
     let content_store = ctx.content_store.clone();
-    let index_dir = ctx.index_dir.clone();
+    let _index_dir = ctx.index_dir.clone();
     let embedder = ctx.embedder.clone();
     let manager = Arc::new(IndexManager::new(
         ctx.lexical.clone(),
@@ -627,7 +600,6 @@ pub async fn handle_search(
         ctx.file_blob_store.clone(),
         // ctx.relation_store.clone(), // Removed
         ctx.graph.clone(),
-        Some(ctx.summary_index.clone()),
     ));
 
     // Symbol search short-circuit
@@ -662,54 +634,7 @@ pub async fn handle_search(
         return Ok(())
     }
 
-    if summary {
-        let sidx = SimpleSummaryIndex::new(&index_dir.join("summaries.db")).await?;
-        if let Some(embedder) = embedder.as_ref() {
-            match sidx.semantic_search(&query, embedder.as_ref(), limit).await {
-                Ok(matches) => {
-                    println!("Found {} summary matches:", matches.len());
-                    for (i, (score, sum)) in matches.iter().enumerate() {
-                        let loc = sum
-                            .file_path
-                            .as_ref()
-                            .map(|p| {
-                                format!(
-                                    "{}:{}-{}",
-                                    p.display(),
-                                    sum.start_line.unwrap_or(0),
-                                    sum.end_line.unwrap_or(0)
-                                )
-                            })
-                            .unwrap_or_else(|| sum.target_id.clone());
-                        println!("\n#{} (score {:.3}) {}", i + 1, score, loc);
-                        println!("{}", sum.text);
-                    }
-                    return Ok(())
-                }
-                Err(e) => eprintln!("Semantic summary search failed: {}", e),
-            }
-        }
 
-        let matches = sidx.search(&query, limit).await?;
-        println!("Found {} summary matches:", matches.len());
-        for (i, sum) in matches.iter().enumerate() {
-            let loc = sum
-                .file_path
-                .as_ref()
-                .map(|p| {
-                    format!(
-                        "{}:{}-{}",
-                        p.display(),
-                        sum.start_line.unwrap_or(0),
-                        sum.end_line.unwrap_or(0)
-                    )
-                })
-                .unwrap_or_else(|| sum.target_id.clone());
-            println!("\n#{} {}", i + 1, loc);
-            println!("{}", sum.text);
-        }
-        return Ok(())
-    }
 
     // Regex short-circuit
     if regex {
@@ -755,52 +680,22 @@ pub async fn handle_search(
         lang_ok && path_ok
     });
 
-    // Boost scores if summaries match query
-    let mut summary_hits_map: HashMap<String, f32> = HashMap::new();
-    let summary_boost = config.ranking.summary;
-    if summary_boost > 0.0 {
-        let sidx = SimpleSummaryIndex::new(&index_dir.join("summaries.db")).await?;
-        if let Some(embedder) = embedder.as_ref() {
-            if let Ok(matches) = sidx.semantic_search(&query, embedder.as_ref(), 50).await {
-                for (score, sum) in matches {
-                    summary_hits_map.insert(sum.target_id.clone(), score);
-                }
-            }
-        } else {
-            if let Ok(summaries) = sidx.search(&query, 50).await {
-                for sum in summaries {
-                    summary_hits_map.insert(sum.target_id.clone(), 1.0);
-                }
-            }
-        }
-        for hit in filtered.iter_mut() {
-            let mut summary_score: f32 = 0.0;
-            if let Some(b) = summary_hits_map.get(&hit.chunk.id) {
-                summary_score = summary_score.max(*b);
-            }
-            let file_key = hit.chunk.file_path.to_string_lossy().to_string();
-            if let Some(b) = summary_hits_map.get(&file_key) {
-                summary_score = summary_score.max(*b);
-            }
-            hit.summary_score = Some(summary_score);
-        }
-    }
+
 
     // Learning-to-rank style fusion: normalize components then combine with weights.
-    let fused = fuse_scores(filtered, &config, summary_boost);
+    let fused = fuse_scores(filtered, &config);
 
     // Display results
     for (i, hit) in fused.iter().enumerate() {
         let chunk = &hit.chunk;
         println!(
-            "\n#{} [{:.3}] lex={:.3?} vec={:.3?} graph={:.3?} sym={:.3?} sum={:.3} {}:{}-{}",
+            "\n#{} [{:.3}] lex={:.3?} vec={:.3?} graph={:.3?} sym={:.3?} {}:{}-{}",
             i + 1,
             hit.score,
             hit.lexical_score,
             hit.vector_score,
             hit.graph_boost,
             hit.symbol_boost,
-            hit.summary_score.unwrap_or(0.0),
             chunk.file_path.display(),
             chunk.start_line,
             chunk.end_line
@@ -830,7 +725,6 @@ pub async fn handle_ask(query: String, verbose: bool, config_path: Option<&Path>
         ctx.file_blob_store.clone(),
         // ctx.relation_store.clone(), // Removed
         ctx.graph.clone(),
-        Some(ctx.summary_index.clone()),
     ));
 
     // Initialize Tools
@@ -1043,7 +937,7 @@ fn build_incoming_subgraph(
     _relation_types: &[String],
     max_hops: u8,
 ) -> Result<GraphSubgraph> {
-    use coderet_graph::graph::{Edge, GraphEdgeInfo, GraphNodeInfo};
+    use coderet_graph::graph::{GraphEdgeInfo, GraphNodeInfo};
 
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
@@ -1079,7 +973,7 @@ fn build_incoming_subgraph(
                 // Actually, for incoming: "Who calls me?"
                 // If Chunk A calls Symbol B, we want to show File A calls Symbol B.
                 
-                let mut relation = edge.kind.clone();
+                let relation = edge.kind.clone();
                 let mut final_source_id = source_node.id.clone();
 
                 if source_node.kind == "chunk" {
@@ -1329,15 +1223,12 @@ fn rank_cfg(config: &Config) -> coderet_core::ranking::RankConfig {
         bm25_b: config.bm25.b,
         edge_weights: config.graph.edge_weights.clone(),
         bm25_avg_len: config.bm25.avg_len,
-        summary_similarity_threshold: 0.25,
-        summary_boost_weight: config.ranking.summary,
     }
 }
 
 fn fuse_scores(
     mut hits: Vec<coderet_core::models::ScoredChunk>,
     config: &Config,
-    summary_weight: f32,
 ) -> Vec<coderet_core::models::ScoredChunk> {
     if hits.is_empty() {
         return hits;
@@ -1358,10 +1249,6 @@ fn fuse_scores(
         .iter()
         .filter_map(|h| h.symbol_boost)
         .fold(0.0_f32, f32::max);
-    let max_sum = hits
-        .iter()
-        .filter_map(|h| h.summary_score)
-        .fold(0.0_f32, f32::max);
 
     for hit in hits.iter_mut() {
         let lex_n = hit
@@ -1380,16 +1267,11 @@ fn fuse_scores(
             .symbol_boost
             .map(|v| if max_sym > 0.0 { v / max_sym } else { 0.0 })
             .unwrap_or(0.0);
-        let sum_n = hit
-            .summary_score
-            .map(|v| if max_sum > 0.0 { v / max_sum } else { 0.0 })
-            .unwrap_or(0.0);
 
         hit.score = lex_n * config.ranking.lexical
             + vec_n * config.ranking.vector
             + graph_n * config.ranking.graph
-            + sym_n * config.ranking.symbol
-            + sum_n * summary_weight;
+            + sym_n * config.ranking.symbol;
     }
     hits.sort_by(|a, b| {
         b.score

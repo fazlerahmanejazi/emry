@@ -11,7 +11,5 @@ fn rank_cfg(config: &coderet_config::Config) -> RankConfig {
         bm25_b: config.bm25.b,
         bm25_avg_len: config.bm25.avg_len,
         edge_weights: config.graph.edge_weights.clone(),
-        summary_similarity_threshold: 0.25,
-        summary_boost_weight: config.ranking.summary,
     }
 }

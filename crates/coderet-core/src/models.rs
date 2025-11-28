@@ -92,27 +92,7 @@ pub struct Symbol {
     pub doc_comment: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Summary {
-    pub id: String,
-    pub level: coderet_config::SummaryLevel,
-    pub target_id: String,
-    pub canonical_target_id: Option<String>,
-    pub text: String,
-    pub file_path: Option<PathBuf>,
-    pub start_line: Option<usize>,
-    pub end_line: Option<usize>,
-    pub name: Option<String>,
-    pub language: Option<String>,
-    /// Logical module/namespace for this summary (e.g., top-level directory name).
-    #[serde(default)]
-    pub module: Option<String>,
-    pub model: Option<String>,
-    pub prompt_version: Option<String>,
-    pub generated_at: Option<u64>,
-    pub source_hash: Option<String>,
-    pub embedding: Option<Vec<f32>>,
-}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoredChunk {
@@ -123,7 +103,6 @@ pub struct ScoredChunk {
     pub graph_distance: Option<usize>,
     pub graph_path: Option<Vec<String>>,
     pub symbol_boost: Option<f32>,
-    pub summary_score: Option<f32>,
     pub chunk: crate::models::Chunk,
 }
 
@@ -131,7 +110,6 @@ pub struct ScoredChunk {
 pub struct ContextualResult {
     pub chunks: Vec<ScoredChunk>,
     pub paths: Vec<paths::Path>,
-    pub summaries: Vec<Summary>,
 }
 
 // Re-export Path for convenience if needed, but it's in coderet-graph

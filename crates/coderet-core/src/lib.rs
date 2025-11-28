@@ -1,10 +1,9 @@
 pub mod chunking;
-pub mod llm;
+
 pub mod models;
 pub mod ranking;
 pub mod relations;
 pub mod scanner;
-pub mod summaries;
 pub mod symbols;
 pub mod tags_extractor;
 pub mod traits;

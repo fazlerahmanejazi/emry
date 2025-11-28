@@ -1,6 +1,5 @@
 use coderet_core::models::{Chunk, Language, Symbol};
 use coderet_graph::graph::GraphNode;
-use coderet_index::summaries::SummaryRecord;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,12 +9,6 @@ pub struct ChunkHit {
     pub vector_score: Option<f32>,
     pub graph_path: Option<Vec<String>>,
     pub chunk: Chunk,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SummaryHit {
-    pub score: f32,
-    pub summary: SummaryRecord,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -57,7 +57,7 @@ impl GraphTool {
 
         match direction {
             GraphDirection::Out => {
-                let sub = graph.get_neighbors(&node_id)?;
+                let _sub = graph.get_neighbors(&node_id)?;
                 // Convert from coderet_graph type to coderet_context type
                 // Note: get_neighbors now returns Vec<GraphNode>, not a subgraph struct directly in new impl
                 // We need to manually construct edges or update get_neighbors to return edges too.

@@ -5,7 +5,7 @@ use coderet_core::traits::Embedder;
 use coderet_graph::graph::{CodeGraph, GraphNode};
 use coderet_graph::path::{PathBuilder, PathBuilderConfig};
 use coderet_index::lexical::LexicalIndex;
-use coderet_index::summaries::SummaryIndex;
+
 use coderet_index::vector::VectorIndex;
 use coderet_store::chunk_store::ChunkStore;
 use coderet_store::content_store::ContentStore;
@@ -26,7 +26,6 @@ pub struct SearchHit {
     pub graph_distance: Option<usize>,
     pub graph_path: Option<Vec<String>>,
     pub symbol_boost: Option<f32>,
-    pub summary_score: Option<f32>,
     pub chunk: Chunk,
 }
 
@@ -40,7 +39,6 @@ pub struct IndexManager {
     pub file_blob_store: Arc<FileBlobStore>,
     // pub relation_store: Arc<RelationStore>, // Removed
     pub graph: Arc<RwLock<CodeGraph>>,
-    pub summary: Option<Arc<Mutex<SummaryIndex>>>,
 }
 
 impl IndexManager {
@@ -54,7 +52,6 @@ impl IndexManager {
         file_blob_store: Arc<FileBlobStore>,
         // relation_store: Arc<RelationStore>, // Removed
         graph: Arc<RwLock<CodeGraph>>,
-        summary: Option<Arc<Mutex<SummaryIndex>>>,
     ) -> Self {
         Self {
             lexical,
@@ -66,7 +63,6 @@ impl IndexManager {
             file_blob_store,
             // relation_store,
             graph,
-            summary,
         }
     }
 
@@ -133,7 +129,6 @@ impl IndexManager {
                     graph_distance: None,
                     graph_path: None,
                     symbol_boost: None,
-                    summary_score: None,
                     chunk,
                 }
             })
@@ -190,7 +185,6 @@ impl IndexManager {
                                         node.label
                                     )]),
                                     symbol_boost: Some(cfg.symbol_weight),
-                                    summary_score: None,
                                     chunk,
                                 });
                             }
@@ -335,7 +329,6 @@ impl IndexManager {
                     graph_distance: h.graph_distance,
                     graph_path: h.graph_path,
                     symbol_boost: h.symbol_boost,
-                    summary_score: None,
                     chunk: h.chunk,
                 }
             })
@@ -444,46 +437,7 @@ impl IndexManager {
         let cfg = rank_cfg.unwrap_or_default();
 
         // 1. Get Base Chunks (Ranked)
-        let mut chunks = self.search_ranked(query, limit, Some(cfg.clone())).await?;
-
-        // 2. Get Summaries (if enabled)
-        let mut summaries = Vec::new();
-        if let Some(sum_idx) = &self.summary {
-            if let Some(embedder) = &self.embedder {
-                let guard = sum_idx.lock().await;
-                if let Ok(results) = guard.semantic_search(query, embedder.as_ref(), limit).await {
-                    for (score, s) in results {
-                        if score >= cfg.summary_similarity_threshold {
-                            summaries.push(s);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Apply Summary Boost
-        if !summaries.is_empty() && cfg.summary_boost_weight > 0.0 {
-            for chunk in &mut chunks {
-                // Simple overlap check: if chunk file path matches summary file path
-                // In a real impl, we'd check line ranges too.
-                for s in &summaries {
-                    if let Some(s_path) = &s.file_path {
-                        if s_path == &chunk.chunk.file_path {
-                            // Boost!
-                            chunk.score += cfg.summary_boost_weight;
-                            chunk.summary_score =
-                                Some(chunk.summary_score.unwrap_or(0.0) + cfg.summary_boost_weight);
-                        }
-                    }
-                }
-            }
-            // Re-sort after boosting
-            chunks.sort_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
+        let chunks = self.search_ranked(query, limit, Some(cfg.clone())).await?;
 
         // 4. Get Paths (Global Context)
         let mut paths = Vec::new();
@@ -529,7 +483,6 @@ impl IndexManager {
         Ok(coderet_core::models::ContextualResult {
             chunks,
             paths,
-            summaries,
         })
     }
 }

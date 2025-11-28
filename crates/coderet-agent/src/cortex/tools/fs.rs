@@ -2,7 +2,7 @@ use crate::cortex::tool::Tool;
 use anyhow::Result;
 use async_trait::async_trait;
 use coderet_tools::fs::FsTool as InnerFsTool;
-use coderet_tools::FsToolTrait;
+
 use serde_json::{json, Value};
 use std::sync::Arc;
 

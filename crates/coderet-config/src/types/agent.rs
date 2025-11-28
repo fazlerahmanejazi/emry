@@ -26,11 +26,7 @@ pub struct AgentConfig {
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
 
-    /// Enable coverage summary when evidence is empty
-    ///
-    /// If true, provides codebase overview when no specific evidence found.
-    #[serde(default = "default_coverage_on_empty")]
-    pub coverage_on_empty: bool,
+
 
     /// Max plan steps to execute
     ///
@@ -57,7 +53,7 @@ impl Default for AgentConfig {
             max_per_step: default_max_per_step(),
             max_observations: default_max_observations(),
             max_tokens: default_max_tokens(),
-            coverage_on_empty: default_coverage_on_empty(),
+
             max_steps: default_max_steps(),
             max_total_evidence_lines: default_max_total_lines(),
             step_timeout_secs: default_step_timeout(),
@@ -108,9 +104,7 @@ fn default_max_tokens() -> u32 {
     800
 }
 
-fn default_coverage_on_empty() -> bool {
-    true
-}
+
 
 fn default_max_steps() -> usize {
     12

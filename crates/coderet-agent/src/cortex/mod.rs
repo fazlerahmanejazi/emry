@@ -4,9 +4,8 @@ pub mod tools;
 pub mod prompts;
 
 use crate::cortex::context::AgentContext;
-use crate::llm::{ModelProvider, OpenAIProvider};
+use crate::llm::OpenAIProvider;
 use anyhow::Result;
-use std::sync::Arc;
 
 pub struct Cortex {
     pub ctx: AgentContext,

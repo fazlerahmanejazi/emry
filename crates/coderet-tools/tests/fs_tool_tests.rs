@@ -10,7 +10,7 @@ use coderet_store::chunk_store::ChunkStore;
 use coderet_graph::graph::CodeGraph;
 use coderet_index::lexical::LexicalIndex;
 use coderet_index::vector::VectorIndex;
-use coderet_index::summaries::SummaryIndex;
+
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -52,7 +52,7 @@ async fn setup_fs_tool() -> (FsTool, TempDir, TempDir) {
     
     let lexical = Arc::new(LexicalIndex::new(&index_path.join("lexical")).unwrap());
     let vector = Arc::new(Mutex::new(VectorIndex::new(&index_path.join("vector.lance")).await.unwrap()));
-    let summary_index = Arc::new(Mutex::new(SummaryIndex::new(&index_path.join("summaries.db")).await.unwrap()));
+
 
     let ctx = Arc::new(RepoContext {
         root: root_path,
@@ -65,7 +65,7 @@ async fn setup_fs_tool() -> (FsTool, TempDir, TempDir) {
         file_blob_store,
         chunk_store,
         // relation_store,
-        summary_index,
+
         commit_log: None,
         embedder: None,
         lexical,

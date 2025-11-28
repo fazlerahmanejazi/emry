@@ -2,7 +2,7 @@ mod commands;
 
 use anyhow::Result;
 use clap::Parser;
-use commands::{Cli, Commands, GraphArgs}; // Added GraphArgs
+use commands::{Cli, Commands}; // Added GraphArgs
 use tui; // Added import
 
 #[tokio::main]
@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
             lang,
             path,
             symbol,
-            summary,
+
             regex,
             no_ignore,
         } => match commands::handle_search(
@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
             lang,
             path,
             symbol,
-            summary,
+
             regex,
             no_ignore,
         )

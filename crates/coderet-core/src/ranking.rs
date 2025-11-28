@@ -22,8 +22,6 @@ pub struct RankConfig {
     pub bm25_b: f32,
     pub edge_weights: std::collections::HashMap<String, f32>,
     pub bm25_avg_len: usize,
-    pub summary_similarity_threshold: f32,
-    pub summary_boost_weight: f32,
 }
 
 impl Default for RankConfig {
@@ -40,8 +38,6 @@ impl Default for RankConfig {
             bm25_b: 0.75,
             edge_weights: std::collections::HashMap::new(),
             bm25_avg_len: 50,
-            summary_similarity_threshold: 0.75,
-            summary_boost_weight: 0.2,
         }
     }
 }

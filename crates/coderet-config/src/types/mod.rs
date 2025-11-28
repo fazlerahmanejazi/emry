@@ -12,7 +12,6 @@ pub mod graph;
 pub mod llm;
 pub mod ranking;
 pub mod search;
-pub mod summary;
 
 // Re-export all types for convenience
 pub use agent::AgentConfig;
@@ -24,7 +23,7 @@ pub use graph::GraphConfig;
 pub use llm::LlmConfig;
 pub use ranking::RankingConfig;
 pub use search::{SearchConfig, SearchMode};
-pub use summary::{SummaryConfig, SummaryLevel};
+
 
 use serde::{Deserialize, Serialize};
 
@@ -62,10 +61,6 @@ pub struct Config {
     #[serde(default)]
     pub embedding: EmbeddingConfig,
 
-    /// Summary generation settings
-    #[serde(default)]
-    pub summary: SummaryConfig,
-
     /// Agent behavior limits
     #[serde(default)]
     pub agent: AgentConfig,
@@ -85,7 +80,6 @@ impl Default for Config {
             graph: GraphConfig::default(),
             chunking: ChunkingConfig::default(),
             embedding: EmbeddingConfig::default(),
-            summary: SummaryConfig::default(),
             agent: AgentConfig::default(),
             llm: LlmConfig::default(),
         }
@@ -102,7 +96,6 @@ impl crate::validation::Validate for Config {
         self.graph.validate()?;
         self.chunking.validate()?;
         self.embedding.validate()?;
-        self.summary.validate()?;
         self.agent.validate()?;
         self.llm.validate()?;
 

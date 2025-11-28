@@ -18,8 +18,11 @@ pub enum AppMode {
 pub enum AgentStatus {
     Idle,
     Planning,
+    #[allow(dead_code)]
     Executing,
+    #[allow(dead_code)]
     Synthesizing,
+    #[allow(dead_code)]
     Done,
     Error,
 }
@@ -121,21 +124,25 @@ impl App {
         None
     }
 
+    #[allow(dead_code)]
     pub fn on_agent_plan(&mut self, plan: String) {
         self.agent_plan = Some(plan.clone());
         self.agent_status = AgentStatus::Executing;
         self.status = "Executing plan...".to_string();
     }
 
+    #[allow(dead_code)]
     pub fn on_agent_observation(&mut self, obs: String) {
         self.agent_observations.push(obs);
     }
 
+    #[allow(dead_code)]
     pub fn on_agent_synthesizing(&mut self) {
         self.agent_status = AgentStatus::Synthesizing;
         self.status = "Synthesizing answer...".to_string();
     }
 
+    #[allow(dead_code)]
     pub fn on_agent_result(&mut self, answer: String) {
         self.agent_answer = Some(answer.clone());
         self.agent_status = AgentStatus::Done;

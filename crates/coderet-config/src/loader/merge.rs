@@ -16,7 +16,6 @@ pub fn merge(mut base: Config, overlay: Config) -> Config {
     base.graph = merge_graph(base.graph, overlay.graph);
     base.chunking = merge_chunking(base.chunking, overlay.chunking);
     base.embedding = merge_embedding(base.embedding, overlay.embedding);
-    base.summary = merge_summary(base.summary, overlay.summary);
     base.agent = merge_agent(base.agent, overlay.agent);
     base.llm = merge_llm(base.llm, overlay.llm);
     base.core = merge_core(base.core, overlay.core);
@@ -62,11 +61,6 @@ fn merge_ranking(base: RankingConfig, overlay: RankingConfig) -> RankingConfig {
             overlay.symbol
         } else {
             base.symbol
-        },
-        summary: if (overlay.summary - default.summary).abs() > 0.001 {
-            overlay.summary
-        } else {
-            base.summary
         },
     }
 }
@@ -165,51 +159,7 @@ fn merge_embedding(base: EmbeddingConfig, overlay: EmbeddingConfig) -> Embedding
     }
 }
 
-fn merge_summary(base: SummaryConfig, overlay: SummaryConfig) -> SummaryConfig {
-    let default = SummaryConfig::default();
-    SummaryConfig {
-        enabled: if overlay.enabled != default.enabled {
-            overlay.enabled
-        } else {
-            base.enabled
-        },
-        levels: if overlay.levels != default.levels {
-            overlay.levels
-        } else {
-            base.levels
-        },
-        use_llm: if overlay.use_llm != default.use_llm {
-            overlay.use_llm
-        } else {
-            base.use_llm
-        },
-        model: if overlay.model != default.model {
-            overlay.model
-        } else {
-            base.model
-        },
-        max_tokens: if overlay.max_tokens != default.max_tokens {
-            overlay.max_tokens
-        } else {
-            base.max_tokens
-        },
-        prompt_version: if overlay.prompt_version != default.prompt_version {
-            overlay.prompt_version
-        } else {
-            base.prompt_version
-        },
-        retries: if overlay.retries != default.retries {
-            overlay.retries
-        } else {
-            base.retries
-        },
-        concurrency: if overlay.concurrency != default.concurrency {
-            overlay.concurrency
-        } else {
-            base.concurrency
-        },
-    }
-}
+
 
 fn merge_agent(base: AgentConfig, overlay: AgentConfig) -> AgentConfig {
     let default = AgentConfig::default();
@@ -229,11 +179,7 @@ fn merge_agent(base: AgentConfig, overlay: AgentConfig) -> AgentConfig {
         } else {
             base.max_tokens
         },
-        coverage_on_empty: if overlay.coverage_on_empty != default.coverage_on_empty {
-            overlay.coverage_on_empty
-        } else {
-            base.coverage_on_empty
-        },
+
         max_steps: if overlay.max_steps != default.max_steps {
             overlay.max_steps
         } else {

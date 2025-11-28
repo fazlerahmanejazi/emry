@@ -33,15 +33,12 @@ pub struct RankingConfig {
     ///
     /// Boost for exact symbol name matches.
     /// Recommended: 0.1-0.2
+    /// Weight for symbol match boost
+    ///
+    /// Boost for exact symbol name matches.
+    /// Recommended: 0.1-0.2
     #[serde(default = "default_symbol")]
     pub symbol: f32,
-
-    /// Weight for summary match boost
-    ///
-    /// Boost when query matches file/module summaries.
-    /// Recommended: 0.05-0.15
-    #[serde(default = "default_summary")]
-    pub summary: f32,
 }
 
 impl Default for RankingConfig {
@@ -51,7 +48,6 @@ impl Default for RankingConfig {
             vector: default_vector(),
             graph: default_graph(),
             symbol: default_symbol(),
-            summary: default_summary(),
         }
     }
 }
@@ -65,7 +61,6 @@ impl crate::validation::Validate for RankingConfig {
         validate_range("ranking.vector", self.vector, 0.0, 1.0)?;
         validate_range("ranking.graph", self.graph, 0.0, 1.0)?;
         validate_range("ranking.symbol", self.symbol, 0.0, 1.0)?;
-        validate_range("ranking.summary", self.summary, 0.0, 1.0)?;
 
         // Validate primary weights (lexical + vector) sum to ~1.0
         let weights = vec![
@@ -81,7 +76,7 @@ impl crate::validation::Validate for RankingConfig {
 // Defaults chosen empirically:
 // - Lexical is strong for exact matches (0.6)
 // - Vector captures semantic meaning (0.4)
-// - Graph, symbol, summary are additive boosts
+// - Graph and symbol are additive boosts
 
 fn default_lexical() -> f32 {
     0.6 // Emphasize exact matches in code
@@ -97,10 +92,6 @@ fn default_graph() -> f32 {
 
 fn default_symbol() -> f32 {
     0.15 // Boost for symbol matches
-}
-
-fn default_summary() -> f32 {
-    0.1 // Small boost for summary matches
 }
 
 #[cfg(test)]
@@ -140,7 +131,6 @@ mod tests {
             vector: 0.5,
             graph: 0.15,
             symbol: 0.1,
-            summary: 0.05,
         };
         assert!(config.validate().is_ok());
     }

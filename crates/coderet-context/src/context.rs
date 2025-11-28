@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use coderet_config::Config;
 use coderet_graph::graph::CodeGraph;
 use coderet_index::lexical::LexicalIndex;
-use coderet_index::summaries::SummaryIndex as SimpleSummaryIndex;
+
 use coderet_index::vector::VectorIndex;
 use coderet_store::chunk_store::ChunkStore;
 use coderet_store::commit_log::CommitLog;
@@ -30,7 +30,6 @@ pub struct RepoContext {
     pub file_blob_store: Arc<FileBlobStore>,
     pub chunk_store: Arc<ChunkStore>,
     // pub relation_store: Arc<RelationStore>, // Removed
-    pub summary_index: Arc<Mutex<SimpleSummaryIndex>>,
     pub commit_log: Option<CommitLog>,
     pub embedder: Option<Arc<dyn coderet_core::traits::Embedder + Send + Sync>>,
     // Indices
@@ -77,9 +76,7 @@ impl RepoContext {
             VectorIndex::new(&index_dir.join("vector.lance")).await?,
         ));
 
-        let summary_index = Arc::new(Mutex::new(
-            SimpleSummaryIndex::new(&index_dir.join("summaries.db")).await?,
-        ));
+
 
         // Try to initialize embedder using config/environment.
         let embedder = select_embedder(&config.embedding).await.ok();
@@ -95,7 +92,7 @@ impl RepoContext {
             file_blob_store,
             chunk_store,
             // relation_store,
-            summary_index,
+            // relation_store,
             commit_log,
             embedder,
             lexical,

@@ -61,7 +61,6 @@ fn apply_env_var(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "ranking" => apply_ranking_var(&mut config.ranking, &field, value),
         "chunking" => apply_chunking_var(&mut config.chunking, &field, value),
         "embedding" => apply_embedding_var(&mut config.embedding, &field, value),
-        "summary" => apply_summary_var(&mut config.summary, &field, value),
         "agent" => apply_agent_var(&mut config.agent, &field, value),
         "llm" => apply_llm_var(&mut config.llm, &field, value),
         "bm25" => apply_bm25_var(&mut config.bm25, &field, value),
@@ -118,7 +117,6 @@ fn apply_ranking_var(config: &mut RankingConfig, field: &str, value: &str) -> Re
         "vector" => config.vector = parse_float(value)?,
         "graph" => config.graph = parse_float(value)?,
         "symbol" => config.symbol = parse_float(value)?,
-        "summary" => config.summary = parse_float(value)?,
         _ => {
             return Err(ConfigError::EnvVarError {
                 var: format!("CODERET_RANKING_{}", field.to_uppercase()),
@@ -199,26 +197,7 @@ fn apply_embedding_var(config: &mut EmbeddingConfig, field: &str, value: &str) -
     Ok(())
 }
 
-fn apply_summary_var(config: &mut SummaryConfig, field: &str, value: &str) -> Result<()> {
-    match field {
-        "enabled" => config.enabled = parse_bool(value)?,
-        "use_llm" => config.use_llm = parse_bool(value)?,
-        "model" => config.model = value.to_string(),
-        "max_tokens" => {
-            config.max_tokens = value.parse().map_err(|_| ConfigError::EnvVarError {
-                var: "CODERET_SUMMARY_MAX_TOKENS".to_string(),
-                message: format!("Invalid integer: {}", value),
-            })?;
-        }
-        _ => {
-            return Err(ConfigError::EnvVarError {
-                var: format!("CODERET_SUMMARY_{}", field.to_uppercase()),
-                message: format!("Unknown field: {}", field),
-            })
-        }
-    }
-    Ok(())
-}
+
 
 fn apply_agent_var(config: &mut AgentConfig, field: &str, value: &str) -> Result<()> {
     match field {

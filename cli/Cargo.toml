@@ -23,7 +23,6 @@ tui = { path = "../tui" }
 tokio = { workspace = true }
 walkdir = "2.4"
 globset = { workspace = true }
-reqwest = { workspace = true, features = ["json", "blocking"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
@@ -32,7 +31,6 @@ serde = { workspace = true }
 ignore = { workspace = true }
 rayon = { workspace = true }
 futures = { workspace = true }
-async-trait = "0.1"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 indicatif = "0.17"
