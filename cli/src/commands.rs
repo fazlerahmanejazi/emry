@@ -110,8 +110,6 @@ pub enum Commands {
     Graph(GraphArgs),
     /// Show status (not yet implemented)
     Status,
-    /// Launch the TUI (still legacy)
-    Tui,
 }
 
 #[derive(Parser)]

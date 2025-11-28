@@ -3,7 +3,6 @@ mod commands;
 use anyhow::Result;
 use clap::Parser;
 use commands::{Cli, Commands}; // Added GraphArgs
-use tui; // Added import
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -75,13 +74,6 @@ async fn main() -> Result<()> {
             Ok(_) => 0,
             Err(e) => {
                 eprintln!("Status failed: {}", e);
-                1
-            }
-        },
-        Commands::Tui => match tui::run_tui().await {
-            Ok(_) => 0,
-            Err(e) => {
-                eprintln!("TUI failed: {}", e);
                 1
             }
         },

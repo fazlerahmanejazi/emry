@@ -11,25 +11,12 @@ ranking:
   lexical_weight: 0.4
   vector_weight: 0.3
   graph_weight: 0.2
-  summary_weight: 0.1
 
 # Embedding configuration - Using OpenAI
 embedding:
   backend: openai  # Use OpenAI (options: openai, ollama, local)
   model_name: text-embedding-3-small  # Fast and cost-effective
   # Ensure OPENAI_API_KEY is set in your environment
-
-# Summary generation - Enabled with LLM
-summary:
-  enabled: true
-  use_llm: true  # Enable semantic summaries
-  levels:
-    - file
-    - module
-    - repo
-  model: gpt-4o-mini  # Cost-effective for summaries
-  max_tokens: 200  # 2-3 sentences per summary
-  prompt_version: v1
 
 # Code chunking settings
 chunking:
