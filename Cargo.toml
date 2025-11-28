@@ -2,15 +2,15 @@
 resolver = "2"
 members = [
     "cli",
-    "crates/coderet-agent",
-    "crates/coderet-config",
-    "crates/coderet-context",
-    "crates/coderet-core",
-    "crates/coderet-graph",
-    "crates/coderet-index",
-    "crates/coderet-pipeline",
-    "crates/coderet-store",
-    "crates/coderet-tools",
+    "crates/agent",
+    "crates/config",
+    "crates/context",
+    "crates/core",
+    "crates/graph",
+    "crates/index",
+    "crates/pipeline",
+    "crates/store",
+    "crates/tools",
 ]
 
 [workspace.dependencies]

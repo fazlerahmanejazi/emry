@@ -1,8 +1,8 @@
-use coderet_store::content_store::ContentStore;
+use emry_store::content_store::ContentStore;
 use std::path::Path;
 
 pub fn print_snippet(
-    chunk: &coderet_core::models::Chunk,
+    chunk: &emry_core::models::Chunk,
     root: &Path,
     context: usize,
     store: Option<&ContentStore>,
@@ -14,7 +14,7 @@ pub fn print_snippet(
 }
 
 pub fn snippet_as_string(
-    chunk: &coderet_core::models::Chunk,
+    chunk: &emry_core::models::Chunk,
     root: &Path,
     context: usize,
     store: Option<&ContentStore>,
@@ -39,7 +39,7 @@ pub fn snippet_as_string(
     chunk.content.trim().to_string()
 }
 
-fn render_snippet(content: &str, chunk: &coderet_core::models::Chunk, context: usize) -> String {
+fn render_snippet(content: &str, chunk: &emry_core::models::Chunk, context: usize) -> String {
     let lines: Vec<&str> = content.lines().collect();
     let start = chunk.start_line.saturating_sub(1).saturating_sub(context);
     let end = usize::min(lines.len(), chunk.end_line + context);

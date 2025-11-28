@@ -1,24 +1,24 @@
 [package]
-name = "cli"
+name = "emry-cli"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "coderet"
+name = "emry"
 path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
-coderet-core = { path = "../crates/coderet-core" }
-coderet-config = { path = "../crates/coderet-config" }
-coderet-index = { path = "../crates/coderet-index" }
-coderet-agent = { path = "../crates/coderet-agent" }
-coderet-pipeline = { path = "../crates/coderet-pipeline" }
-coderet-context = { path = "../crates/coderet-context" }
-coderet-store = { path = "../crates/coderet-store" }
-coderet-graph = { path = "../crates/coderet-graph" }
-coderet-tools = { path = "../crates/coderet-tools" }
+emry-core = { path = "../crates/core" }
+emry-config = { path = "../crates/config" }
+emry-index = { path = "../crates/index" }
+emry-agent = { path = "../crates/agent" }
+emry-pipeline = { path = "../crates/pipeline" }
+emry-context = { path = "../crates/context" }
+emry-store = { path = "../crates/store" }
+emry-graph = { path = "../crates/graph" }
+emry-tools = { path = "../crates/tools" }
 tokio = { workspace = true }
 walkdir = "2.4"
 globset = { workspace = true }

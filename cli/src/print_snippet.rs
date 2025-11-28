@@ -1,6 +1,6 @@
 use std::path::Path;
 
-pub fn print_snippet(chunk: &coderet_core::models::Chunk, root: &Path, context: usize) {
+pub fn print_snippet(chunk: &emry_core::models::Chunk, root: &Path, context: usize) {
     let path = root.join(&chunk.file_path);
     if let Ok(content) = std::fs::read_to_string(&path) {
         let lines: Vec<&str> = content.lines().collect();

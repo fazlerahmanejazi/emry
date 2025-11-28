@@ -1,0 +1,24 @@
+[package]
+name = "emry-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+emry-core = { path = "../core" }
+emry-index = { path = "../index" }
+emry-store = { path = "../store" }
+emry-graph = { path = "../graph" }
+emry-config = { path = "../config" }
+emry-context = { path = "../context" }
+emry-tools = { path = "../tools" }
+emry-pipeline = { path = "../pipeline" }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+async-trait = "0.1"
+globset = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

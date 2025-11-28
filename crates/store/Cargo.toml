@@ -1,0 +1,16 @@
+[package]
+name = "emry-store"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+emry-core = { path = "../core" }
+sled = "0.34"
+serde = { workspace = true }
+anyhow = { workspace = true }
+bincode = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

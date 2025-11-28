@@ -1,0 +1,37 @@
+[package]
+name = "emry-config"
+version = "0.1.0"
+edition = "2021"
+authors = ["Code Retriever Team"]
+description = "Configuration management for emry with validation and multi-format support"
+license = "MIT"
+
+[dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+toml = "0.8"
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Validation
+validator = { version = "0.16", features = ["derive"] }
+
+# Path handling
+camino = "1.1"
+
+# Colored output
+yansi = "1.0"
+atty = "0.2"
+
+[dev-dependencies]
+tempfile = "3.8"
+pretty_assertions = "1.4"
+
+[features]
+default = []
+# Feature flag for migration support
+migration = []

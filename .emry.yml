@@ -1,0 +1,38 @@
+# Emry Configuration
+# For this project (emry itself)
+
+# Search settings
+search:
+  default_top_k: 10
+  mode: hybrid  # Options: hybrid, lexical, vector
+  
+# Ranking weights for hybrid search
+ranking:
+  lexical_weight: 0.4
+  vector_weight: 0.3
+  graph_weight: 0.2
+
+# Embedding configuration - Using OpenAI
+embedding:
+  backend: openai  # Use OpenAI (options: openai, ollama, local)
+  model_name: text-embedding-3-small  # Fast and cost-effective
+  # Ensure OPENAI_API_KEY is set in your environment
+
+# Code chunking settings
+chunking:
+  max_tokens: 800
+  overlap_tokens: 100
+  split_strategy: hierarchical
+
+# LLM settings for agent/RAG
+llm:
+  model: gpt-4o-mini
+  max_tokens: 4096
+  temperature: 0.0
+
+# Agent settings
+agent:
+  max_steps: 12
+  max_per_step_observations: 5
+  max_total_observations: 50
+  max_tokens_per_observation: 800

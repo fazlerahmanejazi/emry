@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 pub fn regex_search(
     root: &Path,
     pattern: &str,
-    index_cfg: &coderet_config::CoreConfig,
+    index_cfg: &emry_config::CoreConfig,
     use_ignore: bool,
 ) -> Result<Vec<(PathBuf, usize, String)>> {
     let mut results = Vec::new();

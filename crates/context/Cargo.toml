@@ -1,0 +1,17 @@
+[package]
+name = "emry-context"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = "0.1"
+emry-config = { path = "../config" }
+emry-core = { path = "../core" }
+emry-graph = { path = "../graph" }
+emry-index = { path = "../index" }
+emry-store = { path = "../store" }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }

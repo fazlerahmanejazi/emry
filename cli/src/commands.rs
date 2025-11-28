@@ -6,32 +6,32 @@ mod regex_utils;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use coderet_agent::cortex::Cortex;
-use coderet_agent::cortex::context::AgentContext;
-use coderet_agent::cortex::tools::{
+use emry_agent::cortex::Cortex;
+use emry_agent::cortex::context::AgentContext;
+use emry_agent::cortex::tools::{
     search::SearchCodeTool,
     graph::InspectGraphTool,
     fs::{ReadFileTool, ListFilesTool},
 };
-use coderet_tools::search::Search;
-use coderet_tools::graph::GraphTool;
-use coderet_tools::fs::FsTool;
-use coderet_context as agent_context;
-use coderet_config::Config;
-use coderet_core::models::Language;
-use coderet_core::scanner::scan_repo;
-use coderet_graph::graph::{CodeGraph, GraphNode, GraphSubgraph};
-use coderet_index::lexical::LexicalIndex;
-use coderet_pipeline::manager::IndexManager;
+use emry_tools::search::Search;
+use emry_tools::graph::GraphTool;
+use emry_tools::fs::FsTool;
+use emry_context as agent_context;
+use emry_config::Config;
+use emry_core::models::Language;
+use emry_core::scanner::scan_repo;
+use emry_graph::graph::{CodeGraph, GraphNode, GraphSubgraph};
+use emry_index::lexical::LexicalIndex;
+use emry_pipeline::manager::IndexManager;
 
-use coderet_index::vector::VectorIndex;
-use coderet_pipeline::index::{compute_hash, prepare_files_async, FileInput, PreparedFile};
-use coderet_store::chunk_store::ChunkStore;
-use coderet_store::commit_log::{CommitEntry, CommitLog};
-use coderet_store::content_store::ContentStore;
-use coderet_store::file_store::{FileMetadata, FileStore};
-// use coderet_store::relation_store::RelationType; // Removed
-use coderet_context::embedder::select_embedder;
+use emry_index::vector::VectorIndex;
+use emry_pipeline::index::{compute_hash, prepare_files_async, FileInput, PreparedFile};
+use emry_store::chunk_store::ChunkStore;
+use emry_store::commit_log::{CommitEntry, CommitLog};
+use emry_store::content_store::ContentStore;
+use emry_store::file_store::{FileMetadata, FileStore};
+// use emry_store::relation_store::RelationType; // Removed
+use emry_context::embedder::select_embedder;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use indicatif::{ProgressBar, ProgressStyle};
 use print_snippet::print_snippet;
@@ -47,7 +47,7 @@ use tracing::{info, trace};
 use serde_json::json;
 
 #[derive(Parser)]
-#[command(name = "code-retriever")]
+#[command(name = "emry")]
 #[command(about = "A local code retrieval tool")]
 pub struct Cli {
     #[command(subcommand)]
@@ -178,11 +178,11 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
 
     // Initialize storage
     let db_path = index_dir.join("store.db");
-    let store = coderet_store::Store::open(&db_path)?;
+    let store = emry_store::Store::open(&db_path)?;
 
     let file_store = Arc::new(FileStore::new(store.clone())?);
     let content_store = Arc::new(ContentStore::new(store.clone())?);
-    let file_blob_store = Arc::new(coderet_store::file_blob_store::FileBlobStore::new(
+    let file_blob_store = Arc::new(emry_store::file_blob_store::FileBlobStore::new(
         store.clone(),
     )?);
     let chunk_store = Arc::new(ChunkStore::new(store.clone())?);
@@ -279,7 +279,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
     }
 
     // Track symbol registry and call/import candidates
-    let mut symbol_registry: Vec<coderet_core::models::Symbol> = Vec::new();
+    let mut symbol_registry: Vec<emry_core::models::Symbol> = Vec::new();
     let mut call_edges: Vec<(String, String)> = Vec::new(); // (caller_file_node, callee_name)
     let mut import_edges: Vec<(String, String)> = Vec::new(); // (file_node, import_name)
 
@@ -746,7 +746,7 @@ pub async fn handle_ask(query: String, verbose: bool, config_path: Option<&Path>
     let model = ctx.config.llm.model.clone();
     let api_base = ctx.config.llm.api_base.clone().unwrap_or_else(|| "https://api.openai.com/v1".to_string());
     let timeout = ctx.config.llm.timeout_secs;
-    let llm = coderet_agent::llm::OpenAIProvider::with_base(model, api_key, api_base, timeout)?;
+    let llm = emry_agent::llm::OpenAIProvider::with_base(model, api_key, api_base, timeout)?;
 
     // Run Cortex
     let mut cortex = Cortex::new(agent_context, llm);
@@ -783,7 +783,7 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
         let graph = graph.read().unwrap();
         match graph.resolve_node_id(&args.node, args.kind.as_deref()) {
             Ok(id) => id,
-            Err(coderet_graph::graph::ResolutionError::Ambiguous(query, candidates)) => {
+            Err(emry_graph::graph::ResolutionError::Ambiguous(query, candidates)) => {
                 if args.json {
                     let json_err = json!({
                         "error": "ambiguous_node",
@@ -810,7 +810,7 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
                 eprintln!("\nTip: Use --kind <file|symbol> to disambiguate.");
                 return Ok(())
             }
-            Err(coderet_graph::graph::ResolutionError::NotFound(query)) => {
+            Err(emry_graph::graph::ResolutionError::NotFound(query)) => {
                 if args.json {
                     let json_err = json!({
                         "error": "node_not_found",
@@ -846,7 +846,7 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
              
              // Add start node
              if let Some(n) = graph_guard.get_node(&node_id)? {
-                 nodes.push(coderet_graph::graph::GraphNodeInfo {
+                 nodes.push(emry_graph::graph::GraphNodeInfo {
                      id: n.id,
                      kind: n.kind,
                      label: n.label,
@@ -866,14 +866,14 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
                          // We are looking for symbols defined by this chunk
                          if let Some(target_node) = graph_guard.get_node(&ce.target)? {
                              // Add the symbol node
-                             nodes.push(coderet_graph::graph::GraphNodeInfo {
+                             nodes.push(emry_graph::graph::GraphNodeInfo {
                                  id: target_node.id.clone(),
                                  kind: target_node.kind,
                                  label: target_node.label,
                                  file_path: Some(target_node.file_path),
                              });
                              // Add a virtual edge from Original Source -> Symbol
-                             edges.push(coderet_graph::graph::GraphEdgeInfo {
+                             edges.push(emry_graph::graph::GraphEdgeInfo {
                                  src: node_id.clone(),
                                  dst: target_node.id,
                                  relation: "defines".to_string(), // Virtual relation
@@ -882,7 +882,7 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
                      }
                  } else {
                      // Normal behavior (keep node)
-                     nodes.push(coderet_graph::graph::GraphNodeInfo {
+                     nodes.push(emry_graph::graph::GraphNodeInfo {
                          id: n.id.clone(),
                          kind: n.kind,
                          label: n.label,
@@ -894,7 +894,7 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
                      let out_edges = graph_guard.outgoing_edges(&node_id)?;
                      for e in out_edges {
                          if e.target == n.id {
-                             edges.push(coderet_graph::graph::GraphEdgeInfo {
+                             edges.push(emry_graph::graph::GraphEdgeInfo {
                                  src: e.source,
                                  dst: e.target,
                                  relation: e.kind,
@@ -935,7 +935,7 @@ fn build_incoming_subgraph(
     _relation_types: &[String],
     max_hops: u8,
 ) -> Result<GraphSubgraph> {
-    use coderet_graph::graph::{GraphEdgeInfo, GraphNodeInfo};
+    use emry_graph::graph::{GraphEdgeInfo, GraphNodeInfo};
 
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
@@ -1035,7 +1035,7 @@ fn build_both_subgraph(
     
     // Outgoing
     if let Some(n) = graph.get_node(start)? {
-         nodes.push(coderet_graph::graph::GraphNodeInfo {
+         nodes.push(emry_graph::graph::GraphNodeInfo {
              id: n.id,
              kind: n.kind,
              label: n.label,
@@ -1044,13 +1044,13 @@ fn build_both_subgraph(
     }
     let out_edges = graph.outgoing_edges(start)?;
     for e in out_edges {
-         edges.push(coderet_graph::graph::GraphEdgeInfo {
+         edges.push(emry_graph::graph::GraphEdgeInfo {
              src: e.source.clone(),
              dst: e.target.clone(),
              relation: e.kind,
          });
          if let Some(n) = graph.get_node(&e.target)? {
-             nodes.push(coderet_graph::graph::GraphNodeInfo {
+             nodes.push(emry_graph::graph::GraphNodeInfo {
                  id: n.id,
                  kind: n.kind,
                  label: n.label,
@@ -1079,7 +1079,7 @@ fn build_both_subgraph(
     })
 }
 
-fn print_subgraph(subgraph: &coderet_graph::graph::GraphSubgraph, source_node: &str) {
+fn print_subgraph(subgraph: &emry_graph::graph::GraphSubgraph, source_node: &str) {
     let neighbors: Vec<_> = subgraph
         .nodes
         .iter()
@@ -1138,7 +1138,7 @@ pub async fn handle_status(config_path: Option<&Path>) -> Result<()> {
     );
 
     if store_exists {
-        if let Ok(store) = coderet_store::Store::open(&index_dir.join("store.db")) {
+        if let Ok(store) = emry_store::Store::open(&index_dir.join("store.db")) {
             if let Ok(file_store) = FileStore::new(store) {
                 if let Ok(files) = file_store.list_metadata() {
                     println!("Files tracked: {}", files.len());
@@ -1149,7 +1149,7 @@ pub async fn handle_status(config_path: Option<&Path>) -> Result<()> {
 
     // Show recent commit log entries for lineage
     if store_exists {
-        if let Ok(store) = coderet_store::Store::open(&index_dir.join("store.db")) {
+        if let Ok(store) = emry_store::Store::open(&index_dir.join("store.db")) {
             if let Ok(commit_log) = CommitLog::new(store) {
                 if let Ok(entries) = commit_log.list(5) {
                     if !entries.is_empty() {
@@ -1208,8 +1208,8 @@ fn path_matches(matcher: &Option<GlobSet>, root: &Path, path: &Path) -> bool {
     }
 }
 
-fn rank_cfg(config: &Config) -> coderet_core::ranking::RankConfig {
-    coderet_core::ranking::RankConfig {
+fn rank_cfg(config: &Config) -> emry_core::ranking::RankConfig {
+    emry_core::ranking::RankConfig {
         lexical_weight: config.ranking.lexical,
         vector_weight: config.ranking.vector,
         graph_weight: config.ranking.graph,
@@ -1225,9 +1225,9 @@ fn rank_cfg(config: &Config) -> coderet_core::ranking::RankConfig {
 }
 
 fn fuse_scores(
-    mut hits: Vec<coderet_core::models::ScoredChunk>,
+    mut hits: Vec<emry_core::models::ScoredChunk>,
     config: &Config,
-) -> Vec<coderet_core::models::ScoredChunk> {
+) -> Vec<emry_core::models::ScoredChunk> {
     if hits.is_empty() {
         return hits;
     }
