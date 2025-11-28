@@ -26,7 +26,7 @@ use coderet_pipeline::manager::IndexManager;
 use coderet_index::vector::VectorIndex;
 use coderet_store::chunk_store::ChunkStore;
 use coderet_store::file_store::FileStore;
-use coderet_store::relation_store::RelationStore;
+// use coderet_store::relation_store::RelationStore; // Removed
 use coderet_store::storage::Store;
 use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
@@ -36,7 +36,7 @@ use coderet_agent::cortex::Cortex;
 use coderet_agent::cortex::context::AgentContext;
 use coderet_agent::cortex::tools::{
     fs::{ListFilesTool, ReadFileTool},
-    graph::{InspectGraphTool, ResolveEntityTool},
+    graph::InspectGraphTool,
     search::SearchCodeTool,
 };
 use coderet_agent::llm::OpenAIProvider;
@@ -61,7 +61,7 @@ pub async fn run_tui() -> Result<()> {
     let store = Store::open(&index_dir.join("store.db"))?;
     let file_store = Arc::new(FileStore::new(store.clone())?);
     let chunk_store = Arc::new(ChunkStore::new(store.clone())?);
-    let relation_store = Arc::new(RelationStore::new(store.clone())?);
+    // let relation_store = Arc::new(RelationStore::new(store.clone())?); // Removed
     
     let graph_path = index_dir.join("graph.bin");
     let graph = Arc::new(RwLock::new(CodeGraph::load(&graph_path)?));
@@ -84,7 +84,7 @@ pub async fn run_tui() -> Result<()> {
         chunk_store,
         content_store.clone(),
         file_blob_store,
-        relation_store,
+        // relation_store,
         graph.clone(),
         None,
     ));
@@ -210,8 +210,8 @@ async fn handle_agent_query(query: &str, manager: Arc<IndexManager>) -> Result<S
 
     // Register Tools
     agent_ctx.register_tool(Arc::new(SearchCodeTool::new(search_tool.clone())));
-    agent_ctx.register_tool(Arc::new(InspectGraphTool::new(graph_tool.clone())));
-    agent_ctx.register_tool(Arc::new(ResolveEntityTool::new(ctx.clone(), search_tool.clone())));
+    agent_ctx.register_tool(Arc::new(InspectGraphTool::new(graph_tool.clone(), ctx.clone())));
+
     agent_ctx.register_tool(Arc::new(ReadFileTool::new(fs_tool.clone())));
     agent_ctx.register_tool(Arc::new(ListFilesTool::new(fs_tool.clone())));
 

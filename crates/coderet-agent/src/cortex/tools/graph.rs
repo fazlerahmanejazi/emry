@@ -3,17 +3,19 @@ use anyhow::Result;
 use async_trait::async_trait;
 use coderet_tools::graph::GraphTool as InnerGraphTool;
 use coderet_tools::graph::GraphDirection;
-use coderet_tools::GraphToolTrait;
+
 use serde_json::{json, Value};
 use std::sync::Arc;
+use coderet_context::RepoContext;
 
 pub struct InspectGraphTool {
     inner: Arc<InnerGraphTool>,
+    ctx: Arc<RepoContext>,
 }
 
 impl InspectGraphTool {
-    pub fn new(inner: Arc<InnerGraphTool>) -> Self {
-        Self { inner }
+    pub fn new(inner: Arc<InnerGraphTool>, ctx: Arc<RepoContext>) -> Self {
+        Self { inner, ctx }
     }
 }
 
@@ -24,7 +26,7 @@ impl Tool for InspectGraphTool {
     }
 
     fn description(&self) -> &str {
-        "Explore the code graph to understand relationships (calls, imports, definitions). You MUST provide a valid Node ID (e.g., 'crates/core/lib.rs:10-20'), NOT a keyword."
+        "Explore the code graph to understand relationships (calls, imports, definitions). You can provide a specific Node ID OR a name/keyword (e.g., 'User', 'auth_flow') which will be resolved automatically."
     }
 
     fn schema(&self) -> Value {
@@ -33,12 +35,17 @@ impl Tool for InspectGraphTool {
             "properties": {
                 "node": {
                     "type": "string",
-                    "description": "The Node ID to start from (must be a valid ID, not a search term)"
+                    "description": "The Node ID or name to start from."
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["file", "symbol", "chunk"],
+                    "description": "Optional. The type of node to look for. Only use this if you need to distinguish between a file and a symbol with the same name."
                 },
                 "relation": {
                     "type": "string",
                     "enum": ["incoming", "outgoing", "both"],
-                    "description": "Direction of traversal",
+                    "description": "Direction of traversal. Use 'outgoing' to see what this node uses (definitions, calls). Use 'incoming' to see what uses this node (callers, importers).",
                     "default": "outgoing"
                 },
                 "max_hops": {
@@ -51,110 +58,45 @@ impl Tool for InspectGraphTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let node = args["node"]
+        let node_query = args["node"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'node' argument"))?;
+        let kind = args["kind"].as_str();
         let relation = args["relation"].as_str().unwrap_or("outgoing");
         let max_hops = args["max_hops"].as_u64().unwrap_or(1) as usize;
 
+        // 1. Resolve the node ID
+        let node_id = {
+            let graph = self.ctx.graph.read().unwrap();
+            match graph.resolve_node_id(node_query, kind) {
+                Ok(id) => id,
+                Err(coderet_graph::graph::ResolutionError::Ambiguous(query, candidates)) => {
+                    let mut out = format!("Ambiguous node '{}'. Did you mean one of these?\n", query);
+                    for (i, c) in candidates.iter().enumerate() {
+                        out.push_str(&format!("{}. {}\n", i + 1, c));
+                    }
+                    out.push_str("\nPlease call this tool again with the 'kind' argument set to 'file' or 'symbol' to disambiguate.");
+                    return Ok(out);
+                }
+                Err(coderet_graph::graph::ResolutionError::NotFound(query)) => {
+                    return Ok(format!("Node '{}' not found in the graph. Try searching for the symbol first using 'search_code' to find the correct name or ID.", query));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
+
+        // 2. Traverse the graph using the resolved ID
         let direction = match relation {
             "incoming" => GraphDirection::In,
+            "both" => GraphDirection::Both,
             _ => GraphDirection::Out,
         };
 
-        let result = (*self.inner).graph(node, direction, max_hops)?;
+        let result = (*self.inner).graph(&node_id, direction, max_hops)?;
         
-        let mut out = String::new();
-        out.push_str("Nodes:\n");
-        for n in &result.subgraph.nodes {
-            out.push_str(&format!(" - {} ({})\n", n.id, n.label));
-        }
-        out.push_str("Edges:\n");
-        for e in &result.subgraph.edges {
-            out.push_str(&format!(" - {} -[{}]-> {}\n", e.source, e.kind, e.target));
-        }
-        
-        Ok(out)
+        // Return JSON by default for the agent
+        let json_output = serde_json::to_string_pretty(&result.subgraph)?;
+        Ok(json_output)
     }
 }
 
-pub struct ResolveEntityTool {
-    ctx: std::sync::Arc<coderet_context::RepoContext>,
-    search: std::sync::Arc<coderet_tools::search::Search>,
-}
-
-impl ResolveEntityTool {
-    pub fn new(
-        ctx: std::sync::Arc<coderet_context::RepoContext>,
-        search: std::sync::Arc<coderet_tools::search::Search>,
-    ) -> Self {
-        Self { ctx, search }
-    }
-}
-
-#[async_trait]
-impl Tool for ResolveEntityTool {
-    fn name(&self) -> &str {
-        "resolve_entity"
-    }
-
-    fn description(&self) -> &str {
-        "Resolve a name or keyword to a concrete Node ID in the graph. Use this BEFORE calling inspect_graph."
-    }
-
-    fn schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The name or keyword to resolve (e.g., 'User', 'auth_flow')"
-                }
-            },
-            "required": ["query"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> Result<String> {
-        let query = args["query"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'query' argument"))?;
-            
-        // Scope the lock so it's dropped before await
-        let nodes = {
-            let graph = self.ctx.graph.read().unwrap();
-            graph.nodes_matching_label(query)?
-        };
-        
-        let mut out = String::new();
-
-        if !nodes.is_empty() {
-            out.push_str(&format!("Found {} exact matches for '{}':\n", nodes.len(), query));
-            for node in nodes {
-                out.push_str(&format!(
-                    "- ID: {}\n  Kind: {}\n  File: {}\n  Label: {}\n\n",
-                    node.id, node.kind, node.file_path, node.label
-                ));
-            }
-        } else {
-            out.push_str(&format!("No exact matches for '{}'. Searching for relevant symbols...\n", query));
-            
-            // Fallback: Use Semantic/Lexical Search
-            let results = self.search.search(query, 5).await?;
-            
-            if results.symbols.is_empty() {
-                 return Ok(format!("No entities found matching '{}' (checked exact graph match and symbol search). Try a different query.", query));
-            }
-
-            out.push_str(&format!("Found {} relevant symbols:\n", results.symbols.len()));
-            for sym in results.symbols {
-                 out.push_str(&format!(
-                    "- ID: {}\n  Kind: {}\n  File: {}\n  Label: {}\n  Score: {:.2}\n\n",
-                    sym.symbol.id, sym.symbol.kind, sym.file_path, sym.name, 0.0 // Score not easily available in SymbolHit, but that's fine
-                ));
-            }
-        }
-        
-        Ok(out)
-    }
-}

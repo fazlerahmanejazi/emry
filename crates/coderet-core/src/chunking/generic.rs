@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 use std::path::Path;
 use tree_sitter::{Parser, Query, QueryCursor};
 use super::languages::{self, ChunkQuery, LanguageSupport};
+use streaming_iterator::StreamingIterator;
 
 pub struct GenericChunker {
     language: Language,
@@ -149,9 +150,9 @@ impl Chunker for GenericChunker {
                 .map_err(|e| anyhow!("Failed to create query: {}", e))?;
 
             let mut cursor = QueryCursor::new();
-            let matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+            let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
 
-            for m in matches {
+            while let Some(m) = matches.next() {
                 for capture in m.captures {
                     let node = capture.node;
                     let start_pos = node.start_position();

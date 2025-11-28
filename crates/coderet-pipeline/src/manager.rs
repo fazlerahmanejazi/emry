@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use coderet_core::models::{Chunk, ScoredChunk};
 use coderet_core::ranking::RankConfig;
 use coderet_core::traits::Embedder;
@@ -11,7 +11,7 @@ use coderet_store::chunk_store::ChunkStore;
 use coderet_store::content_store::ContentStore;
 use coderet_store::file_blob_store::FileBlobStore;
 use coderet_store::file_store::{FileMetadata, FileStore};
-use coderet_store::relation_store::{RelationStore, RelationType};
+// use coderet_store::relation_store::RelationType; // Removed
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tantivy::IndexWriter;
@@ -38,7 +38,7 @@ pub struct IndexManager {
     pub chunk_store: Arc<ChunkStore>,
     pub content_store: Arc<ContentStore>,
     pub file_blob_store: Arc<FileBlobStore>,
-    pub relation_store: Arc<RelationStore>,
+    // pub relation_store: Arc<RelationStore>, // Removed
     pub graph: Arc<RwLock<CodeGraph>>,
     pub summary: Option<Arc<Mutex<SummaryIndex>>>,
 }
@@ -52,7 +52,7 @@ impl IndexManager {
         chunk_store: Arc<ChunkStore>,
         content_store: Arc<ContentStore>,
         file_blob_store: Arc<FileBlobStore>,
-        relation_store: Arc<RelationStore>,
+        // relation_store: Arc<RelationStore>, // Removed
         graph: Arc<RwLock<CodeGraph>>,
         summary: Option<Arc<Mutex<SummaryIndex>>>,
     ) -> Self {
@@ -64,7 +64,7 @@ impl IndexManager {
             chunk_store,
             content_store,
             file_blob_store,
-            relation_store,
+            // relation_store,
             graph,
             summary,
         }
@@ -81,7 +81,7 @@ impl IndexManager {
         // Vector search is optional; fall back gracefully when no embedder is configured.
         let vector_hits = if let Some(embedder) = &self.embedder {
             let query_vec = embedder.embed(query).await?;
-            let mut guard = self.vector.lock().await;
+            let guard = self.vector.lock().await;
             guard.search(&query_vec, limit).await?
         } else {
             Vec::new()
@@ -167,11 +167,12 @@ impl IndexManager {
                     if node.kind != "symbol" {
                         continue;
                     }
-                    if let Ok(definers) = self.relation_store.get_sources_for_target(&node.id) {
-                        for (source, rel) in definers {
-                            if !matches!(rel, RelationType::Defines) {
+                    if let Ok(edges) = graph.incoming_edges(&node.id) {
+                        for edge in edges {
+                            if edge.kind != "defines" {
                                 continue;
                             }
+                            let source = edge.source;
                             if existing_ids.contains(&source) {
                                 continue;
                             }
@@ -211,11 +212,12 @@ impl IndexManager {
             };
             for hit in hits.iter_mut() {
                 let mut symbol_match_boost: Option<f32> = None;
-                if let Ok(defines) = self.relation_store.get_relations_from(&hit.chunk.id) {
-                    for (target, rel) in defines {
-                        if !matches!(rel, RelationType::Defines) {
+                if let Ok(edges) = graph.outgoing_edges(&hit.chunk.id) {
+                    for edge in edges {
+                        if edge.kind != "defines" {
                             continue;
                         }
+                        let target = edge.target;
                         if let Some(node) = graph.get_node(&target)? {
                             if node.label.to_lowercase().contains(&query.to_lowercase()) {
                                 symbol_match_boost = Some(cfg.symbol_weight);
@@ -280,11 +282,12 @@ impl IndexManager {
 
                 // Fallback: direct symbol match on defined symbols if no path was found.
                 if best_boost.is_none() {
-                    if let Ok(defines) = self.relation_store.get_relations_from(&hit.chunk.id) {
-                        for (target, rel) in defines {
-                            if !matches!(rel, RelationType::Defines) {
-                                continue;
-                            }
+                if let Ok(edges) = graph.outgoing_edges(&hit.chunk.id) {
+                    for edge in edges {
+                        if edge.kind != "defines" {
+                            continue;
+                        }
+                        let target = edge.target;
                             if let Some(node) = graph.get_node(&target)? {
                                 if node.label.to_lowercase().contains(&query.to_lowercase()) {
                                     best_boost = Some(cfg.symbol_weight);
@@ -348,14 +351,15 @@ impl IndexManager {
 
     fn start_nodes_for_chunk(&self, chunk: &Chunk) -> Vec<String> {
         let mut nodes = Vec::new();
-        if let Ok(relations) = self.relation_store.get_relations_from(&chunk.id) {
-            for (target, rel) in relations {
-                if matches!(rel, RelationType::Defines) {
-                    nodes.push(target);
+        let graph = self.graph.read().unwrap();
+        
+        if let Ok(edges) = graph.outgoing_edges(&chunk.id) {
+            for edge in edges {
+                if edge.kind == "defines" {
+                    nodes.push(edge.target);
                 }
             }
         }
-        let graph = self.graph.read().unwrap();
         if graph.get_node(&chunk.id).unwrap_or(None).is_some() {
             nodes.push(chunk.id.clone());
         }
@@ -428,7 +432,7 @@ impl IndexManager {
             file_nodes_to_delete: Vec::new(),
             content_puts: Vec::new(),
             file_blob_puts: Vec::new(),
-            relations_to_add: Vec::new(),
+            // relations_to_add: Vec::new(), // Removed
         })
     }
     pub async fn search_contextual(
@@ -594,7 +598,7 @@ pub struct Transaction<'a> {
     file_nodes_to_delete: Vec<String>,
     content_puts: Vec<(String, String)>,
     file_blob_puts: Vec<(std::path::PathBuf, String)>,
-    relations_to_add: Vec<(String, String, RelationType)>,
+    // relations_to_add: Vec<(String, String, RelationType)>, // Removed
 }
 
 impl<'a> Transaction<'a> {
@@ -627,8 +631,8 @@ impl<'a> Transaction<'a> {
         self.graph_edges_to_add.push((source, target, kind));
     }
 
-    pub fn add_relation(&mut self, source: String, target: String, rel: RelationType) {
-        self.relations_to_add.push((source, target, rel));
+    pub fn add_relation(&mut self, _source: String, _target: String, _rel: String) {
+        // No-op: RelationStore is being removed.
     }
 
     pub fn delete_chunks(&mut self, ids: Vec<String>) {
@@ -656,8 +660,8 @@ impl<'a> Transaction<'a> {
             self.manager.lexical.delete_chunks(&self.chunks_to_delete)?;
             let mut vector = self.manager.vector.lock().await;
             vector.delete_chunks(&self.chunks_to_delete).await?;
-            for cid in &self.chunks_to_delete {
-                let _ = self.manager.relation_store.delete_by_source(cid);
+            for _cid in &self.chunks_to_delete {
+                // let _ = self.manager.relation_store.delete_by_source(cid);
             }
             self.manager
                 .chunk_store
@@ -704,11 +708,13 @@ impl<'a> Transaction<'a> {
             graph.save()?; // SAVE THE GRAPH TO DISK
         }
 
+        /*
         for (source, target, rel) in self.relations_to_add {
             self.manager
                 .relation_store
                 .add_relation(&source, &target, rel)?;
         }
+        */
 
         Ok(())
     }

@@ -1,7 +1,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::relations::{extract_calls_imports, RelationRef};
+    use crate::relations::extract_calls_imports;
     use crate::models::Language;
 
     #[test]

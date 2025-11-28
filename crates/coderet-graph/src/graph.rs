@@ -8,9 +8,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
 
-use coderet_store::relation_store::RelationType;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GraphNode {
@@ -163,6 +161,22 @@ impl CodeGraph {
         Ok(edges)
     }
 
+    pub fn incoming_edges(&self, target: &str) -> Result<Vec<Edge>> {
+        let mut edges = Vec::new();
+        if let Some(tgt_idx) = self.node_indices.get(target) {
+            for edge in self.graph.edges_directed(*tgt_idx, Direction::Incoming) {
+                if let Some(source_node) = self.graph.node_weight(edge.source()) {
+                    edges.push(Edge {
+                        source: source_node.id.clone(),
+                        target: target.to_string(),
+                        kind: edge.weight().kind.clone(),
+                    });
+                }
+            }
+        }
+        Ok(edges)
+    }
+
     pub fn list_symbols(&self) -> Result<Vec<GraphNode>> {
         Ok(self.graph.node_weights().filter(|n| n.kind == "symbol").cloned().collect())
     }
@@ -219,20 +233,56 @@ impl CodeGraph {
         Ok(())
     }
 
-    pub fn resolve_node_id(&self, query: &str) -> Result<String, ResolutionError> {
+    pub fn resolve_node_id(&self, query: &str, kind: Option<&str>) -> Result<String, ResolutionError> {
+        // 1. Exact ID match (fast path)
         if self.node_indices.contains_key(query) {
+            // If kind is specified, verify it matches
+            if let Some(k) = kind {
+                if let Ok(Some(node)) = self.get_node(query) {
+                    if node.kind != k {
+                        return Err(ResolutionError::NotFound(format!("{} (kind mismatch)", query)));
+                    }
+                }
+            }
             return Ok(query.to_string());
         }
+
+        // 2. Label match (fuzzy/search)
         let matches = self.nodes_matching_label(query)?;
-        if matches.is_empty() {
+        
+        // Filter by kind if specified
+        let filtered_matches: Vec<GraphNode> = if let Some(k) = kind {
+            matches.into_iter().filter(|n| n.kind == k).collect()
+        } else {
+            matches
+        };
+
+        if filtered_matches.is_empty() {
             return Err(ResolutionError::NotFound(query.to_string()));
         }
-        if matches.len() == 1 {
-            return Ok(matches[0].id.clone());
+        if filtered_matches.len() == 1 {
+            return Ok(filtered_matches[0].id.clone());
         }
-        // Ambiguous - for now just return first or error? 
-        // Original implementation returned Ambiguous error
-        let candidates = matches.iter().map(|n| n.id.clone()).collect();
+
+        // Ambiguous
+        // Smart Default: If kind is NOT specified, apply tie-breaking rules.
+        // Priority: File > Symbol > Chunk
+        if kind.is_none() {
+            // Check for File
+            if let Some(f) = filtered_matches.iter().find(|n| n.kind == "file") {
+                return Ok(f.id.clone());
+            }
+            // Check for Symbol
+            if let Some(s) = filtered_matches.iter().find(|n| n.kind == "symbol") {
+                return Ok(s.id.clone());
+            }
+            // Check for Chunk (unlikely to be desired via fuzzy search, but fallback)
+            if let Some(c) = filtered_matches.iter().find(|n| n.kind == "chunk") {
+                return Ok(c.id.clone());
+            }
+        }
+
+        let candidates = filtered_matches.iter().map(|n| n.id.clone()).collect();
         Err(ResolutionError::Ambiguous(query.to_string(), candidates))
     }
 }

@@ -10,7 +10,7 @@ use coderet_store::commit_log::CommitLog;
 use coderet_store::content_store::ContentStore;
 use coderet_store::file_blob_store::FileBlobStore;
 use coderet_store::file_store::FileStore;
-use coderet_store::relation_store::RelationStore;
+// use coderet_store::relation_store::RelationStore; // Removed
 use coderet_store::storage::Store;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -29,7 +29,7 @@ pub struct RepoContext {
     pub content_store: Arc<ContentStore>,
     pub file_blob_store: Arc<FileBlobStore>,
     pub chunk_store: Arc<ChunkStore>,
-    pub relation_store: Arc<RelationStore>,
+    // pub relation_store: Arc<RelationStore>, // Removed
     pub summary_index: Arc<Mutex<SimpleSummaryIndex>>,
     pub commit_log: Option<CommitLog>,
     pub embedder: Option<Arc<dyn coderet_core::traits::Embedder + Send + Sync>>,
@@ -64,7 +64,7 @@ impl RepoContext {
         let content_store = Arc::new(ContentStore::new(store.clone())?);
         let file_blob_store = Arc::new(FileBlobStore::new(store.clone())?);
         let chunk_store = Arc::new(ChunkStore::new(store.clone())?);
-        let relation_store = Arc::new(RelationStore::new(store.clone())?);
+        // let relation_store = Arc::new(RelationStore::new(store.clone())?); // Removed
         
         // Load graph from file
         let graph_path = index_dir.join("graph.bin");
@@ -94,7 +94,7 @@ impl RepoContext {
             content_store,
             file_blob_store,
             chunk_store,
-            relation_store,
+            // relation_store,
             summary_index,
             commit_log,
             embedder,

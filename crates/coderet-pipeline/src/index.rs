@@ -80,7 +80,7 @@ pub async fn prepare_files_async(
             let total_chunks = all_chunks_refs.len();
             println!("Embedding {} chunks in batches...", total_chunks);
 
-            let texts: Vec<String> = all_chunks_refs.iter().map(|c| c.content.clone()).collect();
+            let _texts: Vec<String> = all_chunks_refs.iter().map(|c| c.content.clone()).collect();
             // Embed in batches of 512 to avoid hitting API limits too hard
             for (i, chunk_batch) in all_chunks_refs.chunks_mut(512).enumerate() {
                 let batch_texts: Vec<String> =
@@ -142,22 +142,33 @@ fn prepare_file(
         }
     }
 
+    // Extract call edges using stack-graphs (if supported)
+    let mut call_edges: Vec<(String, String)> = Vec::new();
+    if coderet_core::supports_stack_graphs(&input.language) {
+        if let Ok(edges) = coderet_core::extract_call_edges_stack_graphs(&input.path, &input.language) {
+            // Convert CallEdge to (String, String) format
+            // Format: (from_file, to_symbol) - matches existing call_edges format
+            call_edges = edges.into_iter()
+                .map(|edge| (edge.from_file, edge.to_symbol))
+                .collect();
+        }
+    }
+
     let (mut calls, mut imports) = extract_calls_imports(&input.language, &input.content);
     if calls.is_empty() && imports.is_empty() {
         let (fallback_calls, fallback_imports) = extract_calls_and_imports(&input.content);
         calls.extend(
             fallback_calls
                 .into_iter()
-                .map(|name| RelationRef { name, line: 1 }),
+                .map(|c| RelationRef { name: c, line: 0 }),
         );
         imports.extend(
             fallback_imports
                 .into_iter()
-                .map(|name| RelationRef { name, line: 1 }),
+                .map(|i| RelationRef { name: i, line: 0 }),
         );
     }
 
-    let mut call_edges: Vec<(String, String)> = Vec::new();
     let mut import_edges: Vec<(String, String)> = Vec::new();
 
     for c in calls {

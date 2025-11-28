@@ -6,7 +6,7 @@ use coderet_store::file_store::FileStore;
 use coderet_store::content_store::ContentStore;
 use coderet_store::file_blob_store::FileBlobStore;
 use coderet_store::chunk_store::ChunkStore;
-use coderet_store::relation_store::RelationStore;
+// use coderet_store::relation_store::RelationStore; // Removed
 use coderet_graph::graph::CodeGraph;
 use coderet_index::lexical::LexicalIndex;
 use coderet_index::vector::VectorIndex;
@@ -45,7 +45,7 @@ async fn setup_fs_tool() -> (FsTool, TempDir, TempDir) {
     let content_store = Arc::new(ContentStore::new(store.clone()).unwrap());
     let file_blob_store = Arc::new(FileBlobStore::new(store.clone()).unwrap());
     let chunk_store = Arc::new(ChunkStore::new(store.clone()).unwrap());
-    let relation_store = Arc::new(RelationStore::new(store.clone()).unwrap());
+    // let relation_store = Arc::new(RelationStore::new(store.clone()).unwrap()); // Removed
     
     let graph_path = index_path.join("graph.bin");
     let graph = Arc::new(RwLock::new(CodeGraph::new(graph_path)));
@@ -64,7 +64,7 @@ async fn setup_fs_tool() -> (FsTool, TempDir, TempDir) {
         content_store,
         file_blob_store,
         chunk_store,
-        relation_store,
+        // relation_store,
         summary_index,
         commit_log: None,
         embedder: None,

@@ -12,7 +12,7 @@ use coderet_agent::cortex::Cortex;
 use coderet_agent::cortex::context::AgentContext;
 use coderet_agent::cortex::tools::{
     search::SearchCodeTool,
-    graph::{InspectGraphTool, ResolveEntityTool},
+    graph::InspectGraphTool,
     fs::{ReadFileTool, ListFilesTool},
 };
 use coderet_tools::search::Search;
@@ -32,7 +32,7 @@ use coderet_store::chunk_store::ChunkStore;
 use coderet_store::commit_log::{CommitEntry, CommitLog};
 use coderet_store::content_store::ContentStore;
 use coderet_store::file_store::{FileMetadata, FileStore};
-use coderet_store::relation_store::{RelationStore, RelationType};
+// use coderet_store::relation_store::RelationType; // Removed
 use coderet_context::embedder::select_embedder;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -46,6 +46,7 @@ use summaries::maybe_generate_summaries;
 use termimad::{FmtText, MadSkin}; // Re-adding for render_markdown_answer
 use tokio::sync::Mutex;
 use tracing::{info, warn, debug, trace};
+use serde_json::json;
 
 #[derive(Parser)]
 #[command(name = "code-retriever")]
@@ -133,6 +134,15 @@ pub struct GraphArgs {
     /// Filter by relation kinds (e.g., calls, imports, defines)
     #[arg(long)]
     pub kinds: Vec<String>,
+    /// Filter by node kind (file, symbol, chunk) to resolve ambiguity
+    #[arg(long)]
+    pub kind: Option<String>,
+    /// Output in JSON format
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+    /// Show chunk nodes (hidden by default to reduce noise)
+    #[arg(long, default_value_t = false)]
+    pub show_chunks: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -184,7 +194,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
         store.clone(),
     )?);
     let chunk_store = Arc::new(ChunkStore::new(store.clone())?);
-    let relation_store = Arc::new(RelationStore::new(store.clone())?);
+    // let relation_store = Arc::new(RelationStore::new(store.clone())?); // Removed
     let commit_log = Arc::new(CommitLog::new(store.clone())?);
     
     let graph_path = index_dir.join("graph.bin");
@@ -204,7 +214,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
     let embedder_for_manager = embedder.clone();
     let _embedder_for_search = embedder.clone();
 
-    let relation_store_arc = relation_store.clone();
+    // let relation_store_arc = relation_store.clone(); // Removed
     let graph_arc = graph.clone();
     let manager = Arc::new(IndexManager::new(
         lexical.clone(),
@@ -214,7 +224,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
         chunk_store.clone(),
         content_store.clone(),
         file_blob_store.clone(),
-        relation_store_arc.clone(),
+        // relation_store_arc.clone(), // Removed
         graph_arc.clone(),
         Some(summary_index.clone()),
     ));
@@ -269,7 +279,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
             stale_chunk_ids.extend(ids);
             let file_node_id = format!("file:{}", meta.id);
             txn.delete_file_node(path.to_string_lossy().to_string());
-            let _ = relation_store_arc.delete_by_source(&file_node_id);
+            // let _ = relation_store_arc.delete_by_source(&file_node_id);
             file_store.delete_file(path)?;
             removed_files.push(path.clone());
             stats.removed_files += 1;
@@ -377,7 +387,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
                     txn.delete_chunks(chunk_ids);
                 }
                 txn.delete_file_node(fr.path.to_string_lossy().to_string());
-                let _ = relation_store_arc.delete_by_source(&file_node_id);
+                // let _ = relation_store_arc.delete_by_source(&file_node_id);
                 removed_files.push(fr.path.clone());
                 stats.updated_files += 1;
             }
@@ -461,13 +471,30 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
             });
             txn.add_graph_edge(file_node_id.clone(), sym.id.clone(), "defines".to_string());
             symbol_registry.push(sym.clone());
+
+            // Hierarchy Restoration: Check if symbol has a parent (e.g., "Class.method")
+            // We assume "." or "::" separator.
+            if let Some((parent_name, _)) = sym.name.rsplit_once('.')
+                .or_else(|| sym.name.rsplit_once("::")) 
+            {
+                 // We need to find the parent symbol ID.
+                 // Since we are iterating, the parent might be in the same file or another.
+                 // For same-file parents, we can check pf.symbols.
+                 // For cross-file, we rely on symbol_registry (which is incomplete here).
+                 // Best effort: Check pf.symbols first.
+                 if let Some(parent) = pf.symbols.iter().find(|s| s.name == parent_name) {
+                     txn.add_graph_edge(parent.id.clone(), sym.id.clone(), "contains".to_string());
+                 }
+            }
         }
         for (chunk_id, sym_id) in &pf.chunk_symbol_edges {
+            /*
             txn.add_relation(
                 chunk_id.to_string(),
                 sym_id.to_string(),
                 RelationType::Defines,
             );
+            */
             txn.add_graph_edge(
                 chunk_id.to_string(),
                 sym_id.to_string(),
@@ -515,7 +542,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
         if let Some(target_id) = target {
             trace!("Adding call edge: {} -> {}", caller, target_id);
             txn.add_graph_edge(caller.clone(), target_id.clone(), "calls".to_string());
-            txn.add_relation(caller.clone(), target_id.clone(), RelationType::Calls);
+            // txn.add_relation(caller.clone(), target_id.clone(), "calls".to_string());
         } else {
             trace!("No target found for callee_name='{}'", callee_name);
         }
@@ -529,7 +556,7 @@ pub async fn handle_index(full: bool, config_path: Option<&Path>) -> Result<()> 
         });
         if let Some(target_id) = target {
             txn.add_graph_edge(file_node.clone(), target_id.clone(), "imports".to_string());
-            txn.add_relation(file_node.clone(), target_id.clone(), RelationType::Imports);
+            // txn.add_relation(file_node.clone(), target_id.clone(), "imports".to_string());
         }
     }
 
@@ -598,7 +625,7 @@ pub async fn handle_search(
         ctx.chunk_store.clone(),
         ctx.content_store.clone(),
         ctx.file_blob_store.clone(),
-        ctx.relation_store.clone(),
+        // ctx.relation_store.clone(), // Removed
         ctx.graph.clone(),
         Some(ctx.summary_index.clone()),
     ));
@@ -801,7 +828,7 @@ pub async fn handle_ask(query: String, verbose: bool, config_path: Option<&Path>
         ctx.chunk_store.clone(),
         ctx.content_store.clone(),
         ctx.file_blob_store.clone(),
-        ctx.relation_store.clone(),
+        // ctx.relation_store.clone(), // Removed
         ctx.graph.clone(),
         Some(ctx.summary_index.clone()),
     ));
@@ -815,9 +842,9 @@ pub async fn handle_ask(query: String, verbose: bool, config_path: Option<&Path>
     let mut agent_context = AgentContext::new(ctx.clone(), manager.clone(), ctx.config.agent.clone());
     
     // Register Tools
+    // Register Tools
     agent_context.register_tool(Arc::new(SearchCodeTool::new(search_tool.clone())));
-    agent_context.register_tool(Arc::new(InspectGraphTool::new(graph_tool.clone())));
-    agent_context.register_tool(Arc::new(ResolveEntityTool::new(ctx.clone(), search_tool.clone())));
+    agent_context.register_tool(Arc::new(InspectGraphTool::new(graph_tool.clone(), ctx.clone())));
     agent_context.register_tool(Arc::new(ReadFileTool::new(fs_tool.clone())));
     agent_context.register_tool(Arc::new(ListFilesTool::new(fs_tool.clone())));
 
@@ -862,22 +889,44 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
     // Resolve node ID using the Resolution Layer
     let node_id = {
         let graph = graph.read().unwrap();
-        match graph.resolve_node_id(&args.node) {
+        match graph.resolve_node_id(&args.node, args.kind.as_deref()) {
             Ok(id) => id,
             Err(coderet_graph::graph::ResolutionError::Ambiguous(query, candidates)) => {
+                if args.json {
+                    let json_err = json!({
+                        "error": "ambiguous_node",
+                        "query": query,
+                        "candidates": candidates
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json_err)?);
+                    return Ok(());
+                }
                 eprintln!(
-                    "Ambiguous node '{}'. Did you mean one of these?\n{}",
-                    query,
-                    candidates
-                        .iter()
-                        .enumerate()
-                        .map(|(i, c)| format!("{}. {}", i + 1, c))
-                        .collect::<Vec<_>>()
-                        .join("\n")
+                    "Ambiguous node '{}'. Did you mean one of these?",
+                    query
                 );
+                for (i, c) in candidates.iter().enumerate() {
+                    let desc = if c.starts_with("file:") {
+                        format!("File Node (ID: {})", c)
+                    } else if c.contains(':') { // Symbol usually has path:line:name
+                        format!("Symbol Node (ID: {})", c)
+                    } else {
+                        format!("Chunk Node (ID: {})", c)
+                    };
+                    eprintln!("{}. {}", i + 1, desc);
+                }
+                eprintln!("\nTip: Use --kind <file|symbol> to disambiguate.");
                 return Ok(())
             }
             Err(coderet_graph::graph::ResolutionError::NotFound(query)) => {
+                if args.json {
+                    let json_err = json!({
+                        "error": "node_not_found",
+                        "query": query
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json_err)?);
+                    return Ok(());
+                }
                 eprintln!("Node '{}' not found in the graph.", query);
                 return Ok(())
             }
@@ -885,31 +934,21 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
         }
     };
 
-    let relation_types: Vec<RelationType> = args
+    let relation_types: Vec<String> = args
         .kinds
-        .iter()
-        .filter_map(|k| match k.as_str() {
-            "calls" => Some(RelationType::Calls),
-            "imports" => Some(RelationType::Imports),
-            "defines" => Some(RelationType::Defines),
-            _ => {
-                eprintln!("Unknown relation kind: {}", k);
-                None
-            }
-        })
-        .collect();
+        .clone();
 
-    println!(
-        "{:?} neighbors for node '{}' (resolved to: '{}', max_hops: {}, kinds: {:?}):",
-        args.direction, args.node, node_id, args.max_hops, args.kinds
-    );
+    if !args.json {
+        println!(
+            "{:?} neighbors for node '{}' (resolved to: '{}', max_hops: {}, kinds: {:?}):",
+            args.direction, args.node, node_id, args.max_hops, args.kinds
+        );
+    }
 
     // Use neighbors_subgraph for outgoing, manually build for incoming
     let graph_guard = graph.read().unwrap();
     let subgraph = match args.direction {
         GraphDirection::Outgoing => {
-             // Re-implement neighbors_subgraph logic here since it was removed from CodeGraph
-             // Or better, add it back to CodeGraph? For now, let's implement it here using get_neighbors
              let mut nodes = Vec::new();
              let mut edges = Vec::new();
              
@@ -923,27 +962,54 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
                  });
              }
              
-             // Get neighbors (1 hop for now, loop for max_hops)
-             // Simplified: just get direct neighbors
+             // Get direct neighbors
              let neighbors = graph_guard.get_neighbors(&node_id)?;
              for n in neighbors {
-                 nodes.push(coderet_graph::graph::GraphNodeInfo {
-                     id: n.id.clone(),
-                     kind: n.kind,
-                     label: n.label,
-                     file_path: Some(n.file_path),
-                 });
-                 // We need edge info too... get_neighbors doesn't return edge info.
-                 // Use outgoing_edges instead
-             }
-             
-             let out_edges = graph_guard.outgoing_edges(&node_id)?;
-             for e in out_edges {
-                 edges.push(coderet_graph::graph::GraphEdgeInfo {
-                     src: e.source,
-                     dst: e.target,
-                     relation: e.kind,
-                 });
+                 // Chunk Skipping Logic
+                 if n.kind == "chunk" && !args.show_chunks {
+                     // If it's a chunk and we want to hide it, traverse THROUGH it.
+                     // Find what this chunk defines (outgoing edges from chunk)
+                     let chunk_out_edges = graph_guard.outgoing_edges(&n.id)?;
+                     for ce in chunk_out_edges {
+                         // We are looking for symbols defined by this chunk
+                         if let Some(target_node) = graph_guard.get_node(&ce.target)? {
+                             // Add the symbol node
+                             nodes.push(coderet_graph::graph::GraphNodeInfo {
+                                 id: target_node.id.clone(),
+                                 kind: target_node.kind,
+                                 label: target_node.label,
+                                 file_path: Some(target_node.file_path),
+                             });
+                             // Add a virtual edge from Original Source -> Symbol
+                             edges.push(coderet_graph::graph::GraphEdgeInfo {
+                                 src: node_id.clone(),
+                                 dst: target_node.id,
+                                 relation: "defines".to_string(), // Virtual relation
+                             });
+                         }
+                     }
+                 } else {
+                     // Normal behavior (keep node)
+                     nodes.push(coderet_graph::graph::GraphNodeInfo {
+                         id: n.id.clone(),
+                         kind: n.kind,
+                         label: n.label,
+                         file_path: Some(n.file_path),
+                     });
+                     
+                     // Find the edge connecting source -> n
+                     // We need to iterate outgoing edges of source to find the one pointing to n
+                     let out_edges = graph_guard.outgoing_edges(&node_id)?;
+                     for e in out_edges {
+                         if e.target == n.id {
+                             edges.push(coderet_graph::graph::GraphEdgeInfo {
+                                 src: e.source,
+                                 dst: e.target,
+                                 relation: e.kind,
+                             });
+                         }
+                     }
+                 }
              }
              
              GraphSubgraph { nodes, edges }
@@ -958,10 +1024,14 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
         }
     };
 
-    if subgraph.nodes.is_empty() || (subgraph.nodes.len() == 1 && subgraph.nodes[0].id == node_id) {
-        println!("No neighbors found for '{}'", node_id);
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&subgraph)?);
     } else {
-        print_subgraph(&subgraph, &node_id);
+        if subgraph.nodes.is_empty() || (subgraph.nodes.len() == 1 && subgraph.nodes[0].id == node_id) {
+            println!("No neighbors found for '{}'", node_id);
+        } else {
+            print_subgraph(&subgraph, &node_id);
+        }
     }
 
     Ok(())
@@ -970,7 +1040,7 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
 fn build_incoming_subgraph(
     graph: &CodeGraph,
     start: &str,
-    _relation_types: &[RelationType],
+    _relation_types: &[String],
     max_hops: u8,
 ) -> Result<GraphSubgraph> {
     use coderet_graph::graph::{Edge, GraphEdgeInfo, GraphNodeInfo};
@@ -999,25 +1069,63 @@ fn build_incoming_subgraph(
             continue;
         }
 
-        // Get label of current node
-        let cur_label = graph.get_node(&cur)?.map(|n| n.label).unwrap_or_default();
+        let in_edges = graph.incoming_edges(&cur)?;
+        for edge in in_edges {
+            // Get source node
+            if let Some(mut source_node) = graph.get_node(&edge.source)? {
+                // Chunk Skipping Logic (Incoming)
+                // If source is a chunk, we want to skip it and show the FILE that contains the chunk.
+                // Or, if the chunk defines the symbol, we want to show the FILE/Module that contains the chunk.
+                // Actually, for incoming: "Who calls me?"
+                // If Chunk A calls Symbol B, we want to show File A calls Symbol B.
+                
+                let mut relation = edge.kind.clone();
+                let mut final_source_id = source_node.id.clone();
 
-        // Get all edges and filter for incoming ones manually
-        // Note: get_all_edges removed. We need to iterate over all nodes and their outgoing edges?
-        // Or use petgraph's incoming edges if we had access to the inner graph.
-        // Since CodeGraph wraps StableGraph but doesn't expose incoming edges helper yet...
-        // We should add `incoming_edges` to CodeGraph.
-        // For now, iterating all nodes is too slow.
-        // Let's assume we can't do efficient incoming traversal without graph support.
-        // Falling back to empty for now or we need to add `incoming_edges` to CodeGraph.
-        
-        // TODO: Add incoming_edges to CodeGraph for efficient reverse traversal
-        /*
-        let all_edges = graph.get_all_edges()?;
-        for edge in all_edges {
-            // ...
+                if source_node.kind == "chunk" {
+                    // Find the file that contains this chunk
+                    // We can assume the file path in the chunk node is the file path.
+                    // But we need the File Node ID.
+                    // Usually file node id is "file:<id>".
+                    // We can try to find the file node by path? Or traverse outgoing "contains" from file?
+                    // Easier: Just look at the `file_path` field of the chunk node, and find the File node for that path.
+                    // But `file_path` is a string.
+                    // Let's rely on the graph structure: File -[contains]-> Chunk.
+                    // So we check incoming edges of the Chunk to find the File.
+                    
+                    let chunk_in_edges = graph.incoming_edges(&source_node.id)?;
+                    for ce in chunk_in_edges {
+                        if ce.kind == "contains" {
+                            if let Some(file_node) = graph.get_node(&ce.source)? {
+                                if file_node.kind == "file" {
+                                    source_node = file_node;
+                                    final_source_id = source_node.id.clone();
+                                    // relation remains "calls" or whatever the chunk did
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !visited.contains(&final_source_id) {
+                    nodes.push(GraphNodeInfo {
+                        id: source_node.id.clone(),
+                        kind: source_node.kind.clone(),
+                        label: source_node.label.clone(),
+                        file_path: Some(source_node.file_path.clone()),
+                    });
+                    visited.insert(final_source_id.clone());
+                    queue.push_back((final_source_id.clone(), depth + 1));
+                }
+
+                edges.push(GraphEdgeInfo {
+                    src: final_source_id,
+                    dst: cur.clone(),
+                    relation,
+                });
+            }
         }
-        */
     }
 
     Ok(GraphSubgraph { nodes, edges })
@@ -1026,7 +1134,7 @@ fn build_incoming_subgraph(
 fn build_both_subgraph(
     graph: &CodeGraph,
     start: &str,
-    relation_types: &[RelationType],
+    relation_types: &[String],
     max_hops: u8,
 ) -> Result<GraphSubgraph> {
     // Re-implement logic

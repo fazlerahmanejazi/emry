@@ -7,6 +7,12 @@ pub struct RelationRef {
     pub line: usize,
 }
 
+impl RelationRef {
+    pub fn to_symbol_name(self) -> String {
+        self.name
+    }
+}
+
 /// Extract calls/imports using Tree-sitter (where supported) to avoid fragile regexes.
 /// Returns (calls, imports) with best-effort line numbers for mapping to chunks.
 pub fn extract_calls_imports(

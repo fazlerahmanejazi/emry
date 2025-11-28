@@ -5,7 +5,7 @@ use coderet_config::CoreConfig;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn, trace};
+use tracing::{trace};
 
 #[derive(Debug, Clone)]
 pub struct ScannedFile {
