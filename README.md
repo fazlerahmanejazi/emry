@@ -1,45 +1,59 @@
-# emry
+![emry logo](emry.png)
 
-A high-performance, offline-first CLI for semantic and structural code exploration. It combines precise static analysis with vector and lexical search to enable deep, context-aware reasoning over local git repositories.
 
-## Core Architecture
+Emry is a CLI tool designed for deep semantic and structural code exploration. It combines precise static analysis with vector and lexical search to enable deep, context-aware reasoning over local git repositories using natural language.
 
-Built as a modular Rust workspace optimized for latency and local execution.
+## Core Capabilities
 
-- **`core`**: Domain logic and analysis.
-  - **Stack Graphs**: Implements Stack Graphs to resolve symbols (definitions, references, imports) deterministically across files, enabling "jump to definition" and "find references" with compiler-grade accuracy.
-  - **cAST (Context-Aware Splitting)**: Uses Tree-sitter to split code semantically (by function, class, block), preserving scope context for embeddings.
-- **`index`**: Dual-head search engine.
-  - **Vector**: `lance` for semantic embedding search (captures intent).
-  - **Lexical**: `tantivy` for BM25 keyword search (captures exact matches).
-- **`graph`**: `petgraph`-based knowledge graph. Maps entities (Files, Symbols, Chunks) and relationships (Calls, Imports, Defines) to enable multi-hop reasoning.
-- **`store`**: Persistence layer on `sled`. Content-addressable storage for deduplicated file blobs and metadata.
-- **`agent`**: LLM integration layer managing context windows and tool invocation (`fs`, `search`, `graph`).
-- **`cli`**: Command-line orchestrator.
+*   **Interactive Code Querying**: Engage in natural language conversations with your codebase. The agent performs multi-hop reasoning, utilizing search, graph traversal, and filesystem operations to answer complex questions.
+*   **Hybrid Search**: Combines semantic search (vector embeddings via LanceDB) with lexical search (BM25 ranking via Tantivy) for comprehensive retrieval.  Results are re-ranked based on code relationships.
+*   **Semantic Chunking (cAST)**: Utilizes Tree-sitter AST parsing to split code by semantic boundaries (functions, classes, blocks), preserving context for accurate embeddings.
+*   **Precise Code Navigation**: Employs Stack Graphs for accurate definition jumping, reference finding, and import tracing across files, handling complex scope resolution.
+*   **Code Graph**: Builds a knowledge graph (using Petgraph) of codebase structure, representing files, symbols, and chunks as nodes, and their relationships (calls, imports, defines) as edges.
+*   **Incremental Indexing**: Efficiently updates the index by tracking file changes via content hashing and re-indexing only modified files.
+*   **Branch-Aware Storage**: Maintains separate indices for each Git branch, allowing seamless branch switching without index corruption.
+*   **Offline-First**: All core indexing and querying operations run locally. External API calls are optional for embeddings and LLM inference.
 
-## Supported Languages
+## Architecture Overview
 
-Powered by Tree-sitter and Stack Graphs for robust parsing and symbol resolution:
+Emry is structured as a modular Rust workspace, with distinct crates handling specific functionalities.
 
-| Support Level | Languages | Features |
-| :--- | :--- | :--- |
-| **Full Graph** | Rust, Python, TypeScript, Java, Go | Call graphs, precise navigation, cross-file references |
-| **Basic** | JavaScript, C, C++, C#, Ruby, PHP | Symbol extraction, text-based search |
+### The Indexing Pipeline
 
-## Prerequisites
+This pipeline is responsible for processing the codebase and building the various data structures used for querying.
 
-- **Rust**: Stable toolchain (latest).
-- **Git**: Required for branch detection.
-- **LLM Provider**: OpenAI API key (or compatible endpoint) for embeddings and chat.
+*   **`pipeline`**: Orchestrates the entire indexing workflow, managing concurrency and update processes.
+*   **`core`**: Performs the foundational static analysis. It uses Tree-sitter for parsing and Stack Graphs for symbol resolution and semantic chunking (cAST).
+*   **`graph`**: Constructs and manages the code property graph, capturing structural relationships.
+*   **`index`**: Manages the LanceDB (vector embeddings) and Tantivy (lexical search) indices.
+*   **`store`**: Provides the persistence layer, handling metadata (Sled), content-addressable storage for file blobs, and commit logs for incremental updates.
 
-## Build & Install
+### The Querying & Agent Pipeline
+
+This pipeline handles user interactions, interprets queries, and uses the indexed data to provide answers.
+
+*   **`cli`**: The command-line interface entry point, responsible for parsing user commands (`index`, `search`, `ask`, `graph`, `status`) and dispatching them.
+*   **`agent`**: The "cortex" of the system. It contains the LLM interaction logic, defines the interfaces (schemas) for tools, and orchestrates multi-step reasoning.
+*   **`tools`**: Provides the concrete implementations of the functionalities used by the agent, such as `FsTool` for filesystem operations, `GraphTool` for graph traversal, and `Search` for querying the hybrid index.
+*   **`context`**: Manages the shared application state and resource handles (e.g., database connections, configuration) that are passed across different components.
+*   **`config`**: Handles the loading, parsing, and validation of the `.emry.yml` configuration file.
+
+## Build & Usage
+
+### Prerequisites
+
+-   **Rust**: Stable toolchain (latest).
+-   **Git**: Required for branch detection.
+-   **LLM Provider**: OpenAI API key (or compatible endpoint) for embeddings and chat.
+
+### Build & Install
 
 ```bash
 cargo build --release
 # binary located at target/release/emry
 ```
 
-## Configuration
+### Configuration
 
 Create a `.emry.yml` in your project root or home directory.
 
@@ -55,17 +69,16 @@ llm:
   api_key: "sk-..." # Or via env var OPENAI_API_KEY
 ```
 
-## Usage
+### Usage
 
-### 1. Indexing
+#### 1. Indexing
 Builds the graph, generates embeddings, and populates the stores. Must be run before searching.
 
 ```bash
-# Index the current repository
 emry index 
 ```
 
-### 2. Search
+#### 2. Search
 Perform hybrid retrieval against the index.
 
 ```bash
@@ -73,7 +86,7 @@ Perform hybrid retrieval against the index.
 emry search "How is the RepoContext initialized?"
 ```
 
-### 3. Graph Exploration
+#### 3. Graph Exploration
 Query the static analysis graph directly.
 
 ```bash
@@ -84,24 +97,16 @@ emry graph --incoming "RepoContext"
 emry graph --file "crates/context/src/context.rs"
 ```
 
-### 4. Ask (Agent)
-Interact with the codebase using the LLM agent. The agent autonomously uses search and graph tools to answer complex queries.
+#### 4. Ask (Agent)
+Interact with the codebase using the LLM agent. The agent autonomously uses search, graph and filesystem tools to answer complex queries.
 
 ```bash
-emry ask "Refactor the store trait to support async operations."
+emry ask "How does the indexing pipeline flow from CLI to storage?"
 ```
 
-### 5. Status
+#### 5. Status
 Check the health and stats of the current index.
 
 ```bash
 emry status
 ```
-
-## Data Layout
-
-Indexes are stored locally in `.codeindex/branches/<branch-name>/`.
-- `store.db`: Sled database (metadata, chunks).
-- `vector.lance`: LanceDB vector dataset.
-- `lexical/`: Tantivy index segments.
-- `graph.bin`: Serialized Petgraph structure.

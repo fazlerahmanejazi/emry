@@ -5,6 +5,7 @@ Cargo.lock
 .idea/
 .vscode/
 .codeindex/
+.fastembed_cache/
 *.swp
 *.swo
 target/
@@ -12,3 +13,4 @@ specs/
 /benchmarks
 /core
 GEMINI.md
+target
