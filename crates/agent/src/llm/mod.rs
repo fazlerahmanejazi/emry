@@ -123,12 +123,22 @@ impl OpenAIProvider {
             .send()
             .await?;
 
+        if !res.status().is_success() {
+            let status = res.status();
+            let text = res.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("OpenAI API error: {} - {}", status, text));
+        }
+
         let json: serde_json::Value = res.json().await?;
 
-        Ok(json["choices"][0]["message"]["content"]
+        if let Some(error) = json.get("error") {
+            return Err(anyhow::anyhow!("OpenAI API returned error: {}", error));
+        }
+
+        json["choices"][0]["message"]["content"]
             .as_str()
-            .unwrap_or("")
-            .to_string())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("Invalid response format: missing content in choices"))
     }
 
     pub async fn chat_with_schema(

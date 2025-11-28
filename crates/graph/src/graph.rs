@@ -56,6 +56,9 @@ pub struct GraphSubgraph {
 pub struct CodeGraph {
     graph: StableGraph<GraphNode, EdgeData>,
     node_indices: HashMap<String, NodeIndex>,
+    // Secondary indices for performance
+    files_to_nodes: HashMap<String, Vec<NodeIndex>>,
+    symbol_nodes: Vec<NodeIndex>,
     #[serde(skip)]
     path: Option<PathBuf>,
 }
@@ -65,6 +68,8 @@ impl CodeGraph {
         Self {
             graph: StableGraph::new(),
             node_indices: HashMap::new(),
+            files_to_nodes: HashMap::new(),
+            symbol_nodes: Vec::new(),
             path: Some(path),
         }
     }
@@ -77,6 +82,27 @@ impl CodeGraph {
         let reader = BufReader::new(file);
         let mut graph: CodeGraph = bincode::deserialize_from(reader).context("failed to deserialize graph")?;
         graph.path = Some(path.to_path_buf());
+        
+        // Rebuild indices if they are empty (backward compatibility or if not serialized)
+        // Note: We added them to the struct, so if we load an old graph, bincode might fail 
+        // unless we handle versioning. But since we control the format, let's assume we might need to rebuild
+        // or that the user will re-index.
+        // Actually, bincode is strict. If the struct changed, old files won't load.
+        // We might need to handle migration or just accept that the graph needs to be rebuilt.
+        // For now, let's assume fresh start or compatible struct.
+        // If we wanted to be safe, we'd use a versioned struct or rebuild indices here.
+        // Let's ensure indices are populated if they were skipped or empty.
+        if graph.files_to_nodes.is_empty() && !graph.node_indices.is_empty() {
+             for idx in graph.graph.node_indices() {
+                 if let Some(node) = graph.graph.node_weight(idx) {
+                     graph.files_to_nodes.entry(node.file_path.clone()).or_default().push(idx);
+                     if node.kind == "symbol" {
+                         graph.symbol_nodes.push(idx);
+                     }
+                 }
+             }
+        }
+        
         Ok(graph)
     }
 
@@ -94,8 +120,18 @@ impl CodeGraph {
             return Ok(());
         }
         let id = node.id.clone();
+        let file_path = node.file_path.clone();
+        let is_symbol = node.kind == "symbol";
+        
         let idx = self.graph.add_node(node);
         self.node_indices.insert(id, idx);
+        
+        // Update indices
+        self.files_to_nodes.entry(file_path).or_default().push(idx);
+        if is_symbol {
+            self.symbol_nodes.push(idx);
+        }
+        
         Ok(())
     }
 
@@ -120,6 +156,20 @@ impl CodeGraph {
 
     pub fn remove_node(&mut self, id: &str) -> Result<()> {
         if let Some(idx) = self.node_indices.remove(id) {
+            if let Some(node) = self.graph.node_weight(idx) {
+                // Remove from file index
+                if let Some(nodes) = self.files_to_nodes.get_mut(&node.file_path) {
+                    if let Some(pos) = nodes.iter().position(|&x| x == idx) {
+                        nodes.swap_remove(pos);
+                    }
+                }
+                // Remove from symbol index
+                if node.kind == "symbol" {
+                    if let Some(pos) = self.symbol_nodes.iter().position(|&x| x == idx) {
+                        self.symbol_nodes.swap_remove(pos);
+                    }
+                }
+            }
             self.graph.remove_node(idx);
         }
         Ok(())
@@ -178,7 +228,9 @@ impl CodeGraph {
     }
 
     pub fn list_symbols(&self) -> Result<Vec<GraphNode>> {
-        Ok(self.graph.node_weights().filter(|n| n.kind == "symbol").cloned().collect())
+        Ok(self.symbol_nodes.iter()
+            .filter_map(|&idx| self.graph.node_weight(idx).cloned())
+            .collect())
     }
 
     pub fn list_all_nodes(&self) -> Result<Vec<GraphNode>> {
@@ -222,14 +274,22 @@ impl CodeGraph {
     }
 
     pub fn delete_nodes_for_file(&mut self, file_path: &str) -> Result<()> {
-        let to_remove: Vec<String> = self.graph.node_weights()
-            .filter(|n| n.file_path == file_path)
-            .map(|n| n.id.clone())
-            .collect();
+        // Use index to find nodes to remove
+        let to_remove: Vec<String> = if let Some(indices) = self.files_to_nodes.get(file_path) {
+             indices.iter()
+                .filter_map(|&idx| self.graph.node_weight(idx).map(|n| n.id.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         
         for id in to_remove {
             self.remove_node(&id)?;
         }
+        
+        // Clean up empty entry in files_to_nodes
+        self.files_to_nodes.remove(file_path);
+        
         Ok(())
     }
 

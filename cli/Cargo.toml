@@ -35,3 +35,4 @@ tracing-subscriber = { workspace = true }
 indicatif = "0.17"
 console = "0.15"
 termimad = "0.30"
+textwrap = "0.16.2"

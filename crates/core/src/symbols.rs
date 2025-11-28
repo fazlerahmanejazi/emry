@@ -1,6 +1,5 @@
 use crate::models::{Language, Symbol};
 use crate::tags_extractor::TagsExtractor;
-use crate::stack_graphs_symbols::{extract_symbols_stack_graphs, supports_stack_graphs};
 use anyhow::Result;
 use std::path::Path;
 
@@ -9,6 +8,11 @@ use std::path::Path;
 /// falling back to tree-sitter-tags if stack-graphs fails or for unsupported languages.
 pub fn extract_symbols(content: &str, path: &Path, language: &Language) -> Result<Vec<Symbol>> {
     // Try stack-graphs for supported languages
+    // Try stack-graphs for supported languages
+    // Note: We currently disable per-file stack-graphs extraction here because it is inefficient
+    // (builds a new graph per file) and we are building a global stack-graph later in the pipeline.
+    // For simple symbol lists, tree-sitter-tags is sufficient and faster.
+    /*
     if supports_stack_graphs(language) {
         if let Ok(symbols) = extract_symbols_stack_graphs(content, path, language) {
             if !symbols.is_empty() {
@@ -17,6 +21,7 @@ pub fn extract_symbols(content: &str, path: &Path, language: &Language) -> Resul
         }
         // Fall through to tags extractor if stack-graphs fails or returns nothing
     }
+    */
     
     // Create extractor per-call since TagsConfiguration isn't Send
     // This is fine - extraction only happens during indexing, not on hot path

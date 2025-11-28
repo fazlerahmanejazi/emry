@@ -25,6 +25,7 @@ pub struct FileInput {
 /// Prepared artifacts ready to be written to stores/indices.
 pub struct PreparedFile {
     pub path: PathBuf,
+    pub language: Language,
     pub file_id: u64,
     pub file_node_id: String,
     pub hash: String,
@@ -142,17 +143,9 @@ fn prepare_file(
         }
     }
 
-    // Extract call edges using stack-graphs (if supported)
+    // Stack-graphs call extraction is now handled globally in the pipeline
+    // using StackGraphManager. We no longer extract per-file here.
     let mut call_edges: Vec<(String, String)> = Vec::new();
-    if emry_core::supports_stack_graphs(&input.language) {
-        if let Ok(edges) = emry_core::extract_call_edges_stack_graphs(&input.path, &input.language) {
-            // Convert CallEdge to (String, String) format
-            // Format: (from_file, to_symbol) - matches existing call_edges format
-            call_edges = edges.into_iter()
-                .map(|edge| (edge.from_file, edge.to_symbol))
-                .collect();
-        }
-    }
 
     let (mut calls, mut imports) = extract_calls_imports(&input.language, &input.content);
     if calls.is_empty() && imports.is_empty() {
@@ -204,6 +197,7 @@ fn prepare_file(
 
     Ok(PreparedFile {
         path: input.path.clone(),
+        language: input.language.clone(),
         file_id: input.file_id,
         file_node_id: input.file_node_id.clone(),
         hash: input.hash.clone(),

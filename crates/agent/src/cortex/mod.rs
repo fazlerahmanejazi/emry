@@ -7,6 +7,14 @@ use crate::cortex::context::AgentContext;
 use crate::llm::OpenAIProvider;
 use anyhow::Result;
 
+#[derive(Debug, Clone)]
+pub enum CortexEvent {
+    StepStart(usize),
+    Thought(String),
+    ToolCall { name: String, args: serde_json::Value },
+    ToolResult { name: String, result: String },
+}
+
 pub struct Cortex {
     pub ctx: AgentContext,
     pub llm: OpenAIProvider,
@@ -17,7 +25,10 @@ impl Cortex {
         Self { ctx, llm }
     }
 
-    pub async fn run(&mut self, query: &str) -> Result<String> {
+    pub async fn run<F>(&mut self, query: &str, mut on_event: F) -> Result<String> 
+    where
+        F: FnMut(CortexEvent) + Send,
+    {
         self.ctx.history.clear();
         let max_steps = 10;
         
@@ -60,6 +71,8 @@ impl Cortex {
 
         // 2. The Loop
         for step_count in 1..=max_steps {
+            on_event(CortexEvent::StepStart(step_count));
+
             // a. Define Schema
             let schema = serde_json::json!({
                 "type": "object",
@@ -84,11 +97,13 @@ impl Cortex {
             // c. Parse Response
             let step_data: serde_json::Value = serde_json::from_str(&response)
                 .or_else(|_| serde_json::from_str(response.trim()))
-                .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}. Raw response: '{}'", e, response))?;
                 
             let thought = step_data["thought"].as_str().unwrap_or("").to_string();
             let action = step_data["action"].as_str().unwrap_or("").to_string();
             let args = step_data["args"].clone();
+
+            on_event(CortexEvent::Thought(thought.clone()));
             
             // Record Assistant Message
             messages.push(crate::llm::Message {
@@ -106,6 +121,8 @@ impl Cortex {
                 });
             }
             
+            on_event(CortexEvent::ToolCall { name: action.clone(), args: args.clone() });
+
             // e. Execute Tool
             let tool_name = action.clone();
             let tool_result = if let Some(tool) = self.ctx.tools.get(&tool_name) {
@@ -116,6 +133,8 @@ impl Cortex {
             } else {
                 format!("Tool '{}' not found. Available tools: {:?}", tool_name, self.ctx.tools.keys())
             };
+
+            on_event(CortexEvent::ToolResult { name: tool_name.clone(), result: tool_result.clone() });
 
             // Record User Message (Observation)
             messages.push(crate::llm::Message {
