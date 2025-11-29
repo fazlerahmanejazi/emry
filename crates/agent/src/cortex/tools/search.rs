@@ -1,7 +1,7 @@
 use crate::cortex::tool::Tool;
 use anyhow::Result;
 use async_trait::async_trait;
-use emry_tools::search::Search as InnerSearchTool;
+use crate::ops::search::Search as InnerSearchTool;
 use serde_json::{json, Value};
 use std::sync::Arc;
 

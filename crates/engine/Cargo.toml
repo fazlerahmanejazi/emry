@@ -1,0 +1,21 @@
+[package]
+name = "emry-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+emry-config = { path = "../config" }
+emry-core = { path = "../core" }
+emry-store = { path = "../store" }
+
+tokio = { workspace = true }
+futures = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+indicatif = "0.17"
+regex = "1.10"
+tracing = "0.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+surrealdb = { version = "2.0", features = ["kv-rocksdb"] }

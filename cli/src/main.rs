@@ -77,6 +77,15 @@ async fn main() -> Result<()> {
                 1
             }
         },
+        Commands::Explain { location, json } => {
+            match commands::handle_explain(location, json).await {
+                Ok(_) => 0,
+                Err(e) => {
+                    eprintln!("Explain failed: {}", e);
+                    1
+                }
+            }
+        }
     };
 
     std::process::exit(exit_code);

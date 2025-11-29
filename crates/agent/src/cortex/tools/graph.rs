@@ -1,21 +1,20 @@
 use crate::cortex::tool::Tool;
 use anyhow::Result;
 use async_trait::async_trait;
-use emry_tools::graph::GraphTool as InnerGraphTool;
-use emry_tools::graph::GraphDirection;
+use crate::ops::graph::GraphTool as InnerGraphTool;
+use crate::ops::graph::GraphDirection;
 
 use serde_json::{json, Value};
 use std::sync::Arc;
-use emry_context::RepoContext;
+use crate::project::context::RepoContext;
 
 pub struct InspectGraphTool {
     inner: Arc<InnerGraphTool>,
-    ctx: Arc<RepoContext>,
 }
 
 impl InspectGraphTool {
-    pub fn new(inner: Arc<InnerGraphTool>, ctx: Arc<RepoContext>) -> Self {
-        Self { inner, ctx }
+    pub fn new(inner: Arc<InnerGraphTool>, _ctx: Arc<RepoContext>) -> Self {
+        Self { inner }
     }
 }
 
@@ -36,6 +35,10 @@ impl Tool for InspectGraphTool {
                 "node": {
                     "type": "string",
                     "description": "The Node ID or name to start from."
+                },
+                "file_filter": {
+                    "type": "string",
+                    "description": "Optional file path filter (e.g., 'cli/src/commands' or 'ask.rs'). Matches if file path contains this string. Use this to narrow down results when multiple symbols have the same name."
                 },
                 "kind": {
                     "type": "string",
@@ -61,42 +64,57 @@ impl Tool for InspectGraphTool {
         let node_query = args["node"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'node' argument"))?;
-        let kind = args["kind"].as_str();
+        let file_filter = args["file_filter"].as_str();
+        let _kind = args["kind"].as_str(); // Ignored for now, handled by GraphTool heuristics
         let relation = args["relation"].as_str().unwrap_or("outgoing");
         let max_hops = args["max_hops"].as_u64().unwrap_or(1) as usize;
 
-        // 1. Resolve the node ID
-        let node_id = {
-            let graph = self.ctx.graph.read().unwrap();
-            match graph.resolve_node_id(node_query, kind) {
-                Ok(id) => id,
-                Err(emry_graph::graph::ResolutionError::Ambiguous(query, candidates)) => {
-                    let mut out = format!("Ambiguous node '{}'. Did you mean one of these?\n", query);
-                    for (i, c) in candidates.iter().enumerate() {
-                        out.push_str(&format!("{}. {}\n", i + 1, c));
-                    }
-                    out.push_str("\nPlease call this tool again with the 'kind' argument set to 'file' or 'symbol' to disambiguate.");
-                    return Ok(out);
-                }
-                Err(emry_graph::graph::ResolutionError::NotFound(query)) => {
-                    return Ok(format!("Node '{}' not found in the graph. Try searching for the symbol first using 'search_code' to find the correct name or ID.", query));
-                }
-                Err(e) => return Err(e.into()),
-            }
-        };
-
-        // 2. Traverse the graph using the resolved ID
         let direction = match relation {
             "incoming" => GraphDirection::In,
             "both" => GraphDirection::Both,
             _ => GraphDirection::Out,
         };
 
-        let result = (*self.inner).graph(&node_id, direction, max_hops)?;
-        
-        // Return JSON by default for the agent
-        let json_output = serde_json::to_string_pretty(&result.subgraph)?;
-        Ok(json_output)
+        match self.inner.graph(node_query, direction, max_hops, file_filter).await {
+            Ok(result) => {
+                // Check for disambiguation
+                if let Some(candidates) = result.candidates {
+                    let mut response = format!(
+                        "Found {} symbols matching '{}':\n\n", 
+                        candidates.len(), 
+                        node_query
+                    );
+                    
+                    for (i, cand) in candidates.iter().enumerate() {
+                        response.push_str(&format!(
+                            "{}. {} ({})\n   File: {}\n   ID: {}\n\n",
+                            i + 1, cand.label, cand.kind, cand.file_path, cand.id
+                        ));
+                    }
+                    
+                    response.push_str(&format!(
+                        "Please call 'inspect_graph' again with:\n\
+                         - The specific node ID from above, OR\n\
+                         - Use 'file_filter' to narrow results\n\
+                         Example: {{\"node\": \"{}\", \"relation\": \"{}\"}}", 
+                        candidates[0].id, relation
+                    ));
+                    
+                    return Ok(response);
+                }
+                
+                // Success - return graph
+                let json_output = serde_json::to_string_pretty(&result.subgraph)?;
+                Ok(json_output)
+            }
+            Err(e) => {
+                if e.to_string().contains("not found") {
+                     Ok(format!("Node '{}' not found in the graph. Try searching for the symbol first using 'search_code' to find the correct name or ID.", node_query))
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 }
 

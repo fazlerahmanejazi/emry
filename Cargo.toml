@@ -4,13 +4,9 @@ members = [
     "cli",
     "crates/agent",
     "crates/config",
-    "crates/context",
     "crates/core",
-    "crates/graph",
-    "crates/index",
-    "crates/pipeline",
+    "crates/engine",
     "crates/store",
-    "crates/tools",
 ]
 
 [workspace.dependencies]
@@ -23,14 +19,11 @@ libm = "0.2" # Often needed for math
 bincode = "1.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
-tantivy = "0.22"
 tokio = { version = "1", features = ["full"] }
 tree-sitter = "0.24.3"
-lance = "0.39"
-arrow = "56.2"
 futures = "0.3"
 globset = "0.4"
-petgraph = "0.6"
+
 rayon = "1.10"
 itertools = "0.13"
 once_cell = "1.19"
@@ -39,3 +32,4 @@ hex = "0.4"
 tempfile = "3.10"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+surrealdb = { version = "2.0", features = ["kv-rocksdb"] }

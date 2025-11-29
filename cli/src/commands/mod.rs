@@ -1,13 +1,14 @@
 pub mod ask;
+pub mod explain;
 pub mod graph;
 pub mod index;
-pub mod print_snippet;
 pub mod regex_utils;
 pub mod search;
 pub mod status;
 pub mod utils;
 
 pub use ask::handle_ask;
+pub use explain::handle_explain;
 pub use graph::{handle_graph, GraphArgs};
 pub use index::handle_index;
 pub use search::{handle_search, CliSearchMode};
@@ -81,4 +82,12 @@ pub enum Commands {
     Graph(GraphArgs),
     /// Show status (not yet implemented)
     Status,
+    /// Explain resolution of a reference
+    Explain {
+        /// The location of the reference (file:line:col)
+        location: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }

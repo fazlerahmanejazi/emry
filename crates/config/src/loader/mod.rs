@@ -124,7 +124,6 @@ impl Config {
     /// 1. `.emry.toml`
     /// 2. `.emry.yml` or `.emry.yaml`
     /// 3. `.emry.json`
-    /// 4. `.code-retriever.yml` (legacy)
     ///
     /// If no file is found, returns default configuration.
     /// Also applies environment variable overlays.
@@ -135,7 +134,6 @@ impl Config {
             ".emry.yml",
             ".emry.yaml",
             ".emry.json",
-            ".code-retriever.yml", // Legacy support
         ];
 
         let mut builder = ConfigBuilder::new();
@@ -181,9 +179,9 @@ mod tests {
 
     #[test]
     fn test_builder_with_env() {
-        env::set_var("CODERET_SEARCH_TOP_K", "25");
+        env::set_var("EMRY_SEARCH_TOP_K", "25");
         let config = ConfigBuilder::new().with_env().build().unwrap();
         assert_eq!(config.search.top_k, 25);
-        env::remove_var("CODERET_SEARCH_TOP_K");
+        env::remove_var("EMRY_SEARCH_TOP_K");
     }
 }

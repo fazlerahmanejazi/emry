@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 use tree_sitter_tags::{TagsConfiguration, TagsContext};
+
 use crate::models::{Language, Symbol};
 use std::path::PathBuf;
 
@@ -96,14 +97,40 @@ impl TagsExtractor {
         let config = self.configs.get(language)
             .ok_or_else(|| anyhow::anyhow!("No tags config for {:?}", language))?;
         
+        // Parse with tree-sitter to get full ranges
+        // Parse with tree-sitter to get full ranges
+        let mut parser = tree_sitter::Parser::new();
+        let lang_ts = match language {
+            Language::Rust => Some(tree_sitter_rust::LANGUAGE.into()),
+            Language::Python => Some(tree_sitter_python::LANGUAGE.into()),
+            Language::JavaScript => Some(tree_sitter_javascript::LANGUAGE.into()),
+            Language::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            Language::Go => Some(tree_sitter_go::LANGUAGE.into()),
+            Language::Java => Some(tree_sitter_java::LANGUAGE.into()),
+            Language::C => Some(tree_sitter_c::LANGUAGE.into()),
+            Language::Cpp => Some(tree_sitter_cpp::LANGUAGE.into()),
+            Language::CSharp => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+            _ => None,
+        };
+        
+        let tree = if let Some(lang) = lang_ts {
+            if parser.set_language(&lang).is_ok() {
+                parser.parse(content, None)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let (tags, _) = self.context.generate_tags(
             config,
             content.as_bytes(),
             None,
         )?;
-        
+
         let mut symbols = Vec::new();
-        
+
         for tag in tags {
             let tag = tag?;
             
@@ -123,9 +150,28 @@ impl TagsExtractor {
             )?
             .to_string();
             
-            // Use line_range directly (it's already in line numbers, 0-indexed)
-            let start_line = tag.line_range.start + 1;  // Convert to 1-indexed
-            let end_line = tag.line_range.end + 1;
+            // Default to tag range (byte offsets converted to lines)
+            let mut start_byte = tag.line_range.start;
+            let mut end_byte = tag.line_range.end;
+            
+            // Try to refine range using AST
+            if let Some(tree) = &tree {
+                if let Some(node) = tree.root_node().descendant_for_byte_range(tag.name_range.start, tag.name_range.end) {
+                    // Walk up to find definition
+                    let mut curr = node;
+                    while let Some(parent) = curr.parent() {
+                        if is_definition_node(parent.kind(), language) {
+                            start_byte = parent.start_byte();
+                            end_byte = parent.end_byte();
+                            break;
+                        }
+                        curr = parent;
+                    }
+                }
+            }
+            
+            let start_line = byte_to_line(content, start_byte);
+            let end_line = byte_to_line(content, end_byte);
             
             // In 0.23, docs is Option<String> not a Range
             let doc_comment = tag.docs;
@@ -145,6 +191,26 @@ impl TagsExtractor {
         
         Ok(symbols)
     }
+}
+
+fn is_definition_node(kind: &str, lang: &Language) -> bool {
+    match lang {
+        Language::Rust => matches!(kind, "function_item" | "struct_item" | "enum_item" | "trait_item" | "impl_item" | "mod_item" | "const_item" | "static_item"),
+        Language::Python => matches!(kind, "function_definition" | "class_definition"),
+        Language::JavaScript | Language::TypeScript => matches!(kind, "function_declaration" | "class_declaration" | "method_definition" | "arrow_function" | "variable_declarator"),
+        Language::Go => matches!(kind, "function_declaration" | "type_declaration" | "method_declaration"),
+        Language::Java => matches!(kind, "method_declaration" | "class_declaration" | "interface_declaration"),
+        Language::C | Language::Cpp => matches!(kind, "function_definition" | "struct_specifier" | "class_specifier"),
+        _ => false,
+    }
+}
+
+fn byte_to_line(content: &str, byte_offset: usize) -> usize {
+    // 1-indexed line number
+    if byte_offset >= content.len() {
+        return content.lines().count();
+    }
+    content[..byte_offset].chars().filter(|&c| c == '\n').count() + 1
 }
 
 #[cfg(test)]
@@ -221,7 +287,7 @@ mod tests {
     #[test]
     fn test_python_class_extraction() {
         let code = r#"
-class CodeRetriever:
+class Emry:
     def search(self, query):
         pass
         "#;
@@ -233,7 +299,7 @@ class CodeRetriever:
             &Language::Python,
         ).unwrap();
         
-        assert!(symbols.iter().any(|s| s.name == "CodeRetriever"));
+        assert!(symbols.iter().any(|s| s.name == "Emry"));
         assert!(symbols.iter().any(|s| s.name == "search"));
     }
     
@@ -253,5 +319,31 @@ type Config struct {
         ).unwrap();
         
         assert!(symbols.iter().any(|s| s.name == "Config"));
+    }
+    #[test]
+    fn test_rust_multiline_range() {
+        let code = r#"
+fn my_func() {
+    println!("line 1");
+    println!("line 2");
+}
+"#;
+        // Lines:
+        // 1: empty
+        // 2: fn my_func() {
+        // 3:     println!("line 1");
+        // 4:     println!("line 2");
+        // 5: }
+        
+        let mut extractor = TagsExtractor::new().unwrap();
+        let symbols = extractor.extract_symbols(
+            code,
+            Path::new("test.rs"),
+            &Language::Rust,
+        ).unwrap();
+        
+        let sym = symbols.iter().find(|s| s.name == "my_func").unwrap();
+        assert_eq!(sym.start_line, 2, "Start line should be 2");
+        assert_eq!(sym.end_line, 5, "End line should be 5");
     }
 }

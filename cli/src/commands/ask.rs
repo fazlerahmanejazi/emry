@@ -8,11 +8,11 @@ use emry_agent::cortex::tools::{
 };
 use emry_agent::llm::OpenAIProvider;
 use emry_config::AgentConfig;
-use emry_context as agent_context;
-use emry_pipeline::manager::IndexManager;
-use emry_tools::fs::FsTool;
-use emry_tools::graph::GraphTool;
-use emry_tools::search::Search;
+use emry_agent::project as agent_context;
+use emry_engine::search::service::SearchService;
+use emry_agent::ops::fs::FsTool;
+use emry_agent::ops::graph::GraphTool;
+use emry_agent::ops::search::Search;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -24,26 +24,26 @@ pub async fn handle_ask(query: String, verbose: bool, config_path: Option<&Path>
     }
 
     let ctx = Arc::new(agent_context::RepoContext::from_env(config_path).await?);
-    let manager = Arc::new(IndexManager::new(
-        ctx.lexical.clone(),
-        ctx.vector.clone(),
-        ctx.embedder.clone(),
-        ctx.file_store.clone(),
-        ctx.chunk_store.clone(),
-        ctx.content_store.clone(),
-        ctx.file_blob_store.clone(),
-        ctx.graph.clone(),
-    ));
+    
+    // Initialize SurrealStore & SearchService
+    // Initialize SurrealStore & SearchService
+    // Reuse store from context if available, or error out
+    let surreal_store = ctx.surreal_store.clone()
+        .ok_or_else(|| anyhow::anyhow!("SurrealStore not initialized in context"))?;
+    let search_service = Arc::new(SearchService::new(surreal_store.clone(), ctx.embedder.clone()));
+    
+    // Legacy Manager (kept for now if needed)
+    // let manager = Arc::new(IndexManager::new(...));
 
     // Initialize AgentContext
     let mut agent_ctx = AgentContext::new(
         ctx.clone(),
-        manager.clone(),
+        search_service.clone(),
         AgentConfig::default(),
     );
 
     // Initialize tools
-    let search_impl = Arc::new(Search::new(ctx.clone(), manager.clone()));
+    let search_impl = Arc::new(Search::new(ctx.clone(), search_service.clone()));
     let search_tool = SearchCodeTool::new(search_impl);
 
     let graph_impl = Arc::new(GraphTool::new(ctx.clone()));

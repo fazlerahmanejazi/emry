@@ -1,6 +1,6 @@
 use crate::cortex::tool::Tool;
-use emry_context::RepoContext;
-use emry_pipeline::manager::IndexManager;
+use crate::project::context::RepoContext;
+use emry_engine::search::service::SearchService;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ pub struct Step {
 
 pub struct AgentContext {
     pub repo_context: Arc<RepoContext>,
-    pub index_manager: Arc<IndexManager>,
+    pub search_service: Arc<SearchService>,
     pub tools: HashMap<String, Arc<dyn Tool>>,
     pub history: Vec<Step>,
     pub memory: Vec<String>, // "Facts" derived from observations
@@ -26,12 +26,12 @@ pub struct AgentContext {
 impl AgentContext {
     pub fn new(
         repo_context: Arc<RepoContext>,
-        index_manager: Arc<IndexManager>,
+        search_service: Arc<SearchService>,
         config: emry_config::AgentConfig,
     ) -> Self {
         Self {
             repo_context,
-            index_manager,
+            search_service,
             tools: HashMap::new(),
             history: Vec::new(),
             memory: Vec::new(),

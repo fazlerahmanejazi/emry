@@ -12,5 +12,6 @@ target/
 specs/
 /benchmarks
 /core
-GEMINI.md
 target
+direction_to_explore.md
+*.md

@@ -322,11 +322,7 @@ fn extract_rust_calls_imports(content: &str) -> (Vec<RelationRef>, Vec<RelationR
             "call_expression" => {
                 if let Some(func) = node.child_by_field_name("function") {
                     if let Ok(full_name) = func.utf8_text(content.as_bytes()) {
-                        let name = full_name
-                            .rsplit(['.', ':', '/']) // Split by '.', '::', or '/'
-                            .next()
-                            .unwrap_or(full_name) // Get the last component
-                            .to_string();
+                        let name = full_name.to_string(); // Keep full qualified name
                         if !name.is_empty() {
                             calls.push(RelationRef {
                                 name,

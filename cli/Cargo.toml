@@ -12,13 +12,9 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 emry-core = { path = "../crates/core" }
 emry-config = { path = "../crates/config" }
-emry-index = { path = "../crates/index" }
+emry-engine = { path = "../crates/engine" }
 emry-agent = { path = "../crates/agent" }
-emry-pipeline = { path = "../crates/pipeline" }
-emry-context = { path = "../crates/context" }
 emry-store = { path = "../crates/store" }
-emry-graph = { path = "../crates/graph" }
-emry-tools = { path = "../crates/tools" }
 tokio = { workspace = true }
 walkdir = "2.4"
 globset = { workspace = true }
@@ -36,3 +32,4 @@ indicatif = "0.17"
 console = "0.15"
 termimad = "0.30"
 textwrap = "0.16.2"
+dialoguer = "0.11"

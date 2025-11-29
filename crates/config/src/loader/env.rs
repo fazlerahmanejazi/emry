@@ -1,12 +1,12 @@
 //! Environment variable configuration overlay
 //!
 //! Supports environment variables in the format:
-//! `CODERET_<section>_<field>=value`
+//! `EMRY_<section>_<field>=value`
 //!
 //! Examples:
-//! - `CODERET_SEARCH_MODE=semantic`
-//! - `CODERET_SEARCH_TOP_K=20`
-//! - `CODERET_CHUNKING_MAX_TOKENS=1024`
+//! - `EMRY_SEARCH_MODE=semantic`
+//! - `EMRY_SEARCH_TOP_K=20`
+//! - `EMRY_CHUNKING_MAX_TOKENS=1024`
 
 use crate::{error::ConfigError, types::*, Config, Result};
 use std::env;
@@ -16,9 +16,9 @@ pub fn from_env() -> Result<Option<Config>> {
     let mut config = Config::default();
     let mut found_any = false;
 
-    // Collect all CODERET_ env vars
+    // Collect all EMRY_ env vars
     let env_vars: Vec<(String, String)> = env::vars()
-        .filter(|(k, _)| k.starts_with("CODERET_"))
+        .filter(|(k, _)| k.starts_with("EMRY_"))
         .collect();
 
     if env_vars.is_empty() {
@@ -41,15 +41,15 @@ pub fn from_env() -> Result<Option<Config>> {
 
 /// Apply a single environment variable to config
 fn apply_env_var(config: &mut Config, key: &str, value: &str) -> Result<()> {
-    // Strip CODERET_ prefix
-    let key = key.strip_prefix("CODERET_").unwrap_or(key);
+    // Strip EMRY_ prefix
+    let key = key.strip_prefix("EMRY_").unwrap_or(key);
 
     // Split into section and field
     let parts: Vec<&str> = key.split('_').collect();
     if parts.len() < 2 {
         return Err(ConfigError::EnvVarError {
             var: key.to_string(),
-            message: "Expected format: CODERET_<section>_<field>".to_string(),
+            message: "Expected format: EMRY_<section>_<field>".to_string(),
         });
     }
 
@@ -90,13 +90,13 @@ fn apply_search_var(config: &mut SearchConfig, field: &str, value: &str) -> Resu
         }
         "top_k" => {
             config.top_k = value.parse().map_err(|_| ConfigError::EnvVarError {
-                var: "CODERET_SEARCH_TOP_K".to_string(),
+                var: "EMRY_SEARCH_TOP_K".to_string(),
                 message: format!("Invalid integer: {}", value),
             })?;
         }
         _ => {
             return Err(ConfigError::EnvVarError {
-                var: format!("CODERET_SEARCH_{}", field.to_uppercase()),
+                var: format!("EMRY_SEARCH_{}", field.to_uppercase()),
                 message: format!("Unknown field: {}", field),
             })
         }
@@ -107,7 +107,7 @@ fn apply_search_var(config: &mut SearchConfig, field: &str, value: &str) -> Resu
 fn apply_ranking_var(config: &mut RankingConfig, field: &str, value: &str) -> Result<()> {
     let parse_float = |v: &str| -> Result<f32> {
         v.parse().map_err(|_| ConfigError::EnvVarError {
-            var: format!("CODERET_RANKING_{}", field.to_uppercase()),
+            var: format!("EMRY_RANKING_{}", field.to_uppercase()),
             message: format!("Invalid float: {}", v),
         })
     };
@@ -119,7 +119,7 @@ fn apply_ranking_var(config: &mut RankingConfig, field: &str, value: &str) -> Re
         "symbol" => config.symbol = parse_float(value)?,
         _ => {
             return Err(ConfigError::EnvVarError {
-                var: format!("CODERET_RANKING_{}", field.to_uppercase()),
+                var: format!("EMRY_RANKING_{}", field.to_uppercase()),
                 message: format!("Unknown field: {}", field),
             })
         }
@@ -131,13 +131,13 @@ fn apply_chunking_var(config: &mut ChunkingConfig, field: &str, value: &str) -> 
     match field {
         "max_tokens" => {
             config.max_tokens = value.parse().map_err(|_| ConfigError::EnvVarError {
-                var: "CODERET_CHUNKING_MAX_TOKENS".to_string(),
+                var: "EMRY_CHUNKING_MAX_TOKENS".to_string(),
                 message: format!("Invalid integer: {}", value),
             })?;
         }
         "overlap_tokens" => {
             config.overlap_tokens = value.parse().map_err(|_| ConfigError::EnvVarError {
-                var: "CODERET_CHUNKING_OVERLAP_TOKENS".to_string(),
+                var: "EMRY_CHUNKING_OVERLAP_TOKENS".to_string(),
                 message: format!("Invalid integer: {}", value),
             })?;
         }
@@ -160,7 +160,7 @@ fn apply_chunking_var(config: &mut ChunkingConfig, field: &str, value: &str) -> 
         }
         _ => {
             return Err(ConfigError::EnvVarError {
-                var: format!("CODERET_CHUNKING_{}", field.to_uppercase()),
+                var: format!("EMRY_CHUNKING_{}", field.to_uppercase()),
                 message: format!("Unknown field: {}", field),
             })
         }
@@ -189,7 +189,7 @@ fn apply_embedding_var(config: &mut EmbeddingConfig, field: &str, value: &str) -
         }
         _ => {
             return Err(ConfigError::EnvVarError {
-                var: format!("CODERET_EMBEDDING_{}", field.to_uppercase()),
+                var: format!("EMRY_EMBEDDING_{}", field.to_uppercase()),
                 message: format!("Unknown field: {}", field),
             })
         }
@@ -203,25 +203,25 @@ fn apply_agent_var(config: &mut AgentConfig, field: &str, value: &str) -> Result
     match field {
         "max_per_step" => {
             config.max_per_step = value.parse().map_err(|_| ConfigError::EnvVarError {
-                var: "CODERET_AGENT_MAX_PER_STEP".to_string(),
+                var: "EMRY_AGENT_MAX_PER_STEP".to_string(),
                 message: format!("Invalid integer: {}", value),
             })?;
         }
         "max_steps" => {
             config.max_steps = value.parse().map_err(|_| ConfigError::EnvVarError {
-                var: "CODERET_AGENT_MAX_STEPS".to_string(),
+                var: "EMRY_AGENT_MAX_STEPS".to_string(),
                 message: format!("Invalid integer: {}", value),
             })?;
         }
         "max_tokens" => {
             config.max_tokens = value.parse().map_err(|_| ConfigError::EnvVarError {
-                var: "CODERET_AGENT_MAX_TOKENS".to_string(),
+                var: "EMRY_AGENT_MAX_TOKENS".to_string(),
                 message: format!("Invalid integer: {}", value),
             })?;
         }
         _ => {
             return Err(ConfigError::EnvVarError {
-                var: format!("CODERET_AGENT_{}", field.to_uppercase()),
+                var: format!("EMRY_AGENT_{}", field.to_uppercase()),
                 message: format!("Unknown field: {}", field),
             })
         }
@@ -234,14 +234,14 @@ fn apply_llm_var(config: &mut LlmConfig, field: &str, value: &str) -> Result<()>
         "model" => config.model = value.to_string(),
         "max_tokens" => {
             config.max_tokens = value.parse().map_err(|_| ConfigError::EnvVarError {
-                var: "CODERET_LLM_MAX_TOKENS".to_string(),
+                var: "EMRY_LLM_MAX_TOKENS".to_string(),
                 message: format!("Invalid integer: {}", value),
             })?;
         }
         "api_base" => config.api_base = Some(value.to_string()),
         _ => {
             return Err(ConfigError::EnvVarError {
-                var: format!("CODERET_LLM_{}", field.to_uppercase()),
+                var: format!("EMRY_LLM_{}", field.to_uppercase()),
                 message: format!("Unknown field: {}", field),
             })
         }
@@ -252,7 +252,7 @@ fn apply_llm_var(config: &mut LlmConfig, field: &str, value: &str) -> Result<()>
 fn apply_bm25_var(config: &mut Bm25Config, field: &str, value: &str) -> Result<()> {
     let parse_float = |v: &str| -> Result<f32> {
         v.parse().map_err(|_| ConfigError::EnvVarError {
-            var: format!("CODERET_BM25_{}", field.to_uppercase()),
+            var: format!("EMRY_BM25_{}", field.to_uppercase()),
             message: format!("Invalid float: {}", v),
         })
     };
@@ -262,13 +262,13 @@ fn apply_bm25_var(config: &mut Bm25Config, field: &str, value: &str) -> Result<(
         "b" => config.b = parse_float(value)?,
         "avg_len" => {
             config.avg_len = value.parse().map_err(|_| ConfigError::EnvVarError {
-                var: "CODERET_BM25_AVG_LEN".to_string(),
+                var: "EMRY_BM25_AVG_LEN".to_string(),
                 message: format!("Invalid integer: {}", value),
             })?;
         }
         _ => {
             return Err(ConfigError::EnvVarError {
-                var: format!("CODERET_BM25_{}", field.to_uppercase()),
+                var: format!("EMRY_BM25_{}", field.to_uppercase()),
                 message: format!("Unknown field: {}", field),
             })
         }
@@ -279,7 +279,7 @@ fn apply_bm25_var(config: &mut Bm25Config, field: &str, value: &str) -> Result<(
 fn apply_graph_var(config: &mut GraphConfig, field: &str, value: &str) -> Result<()> {
     let parse_float = |v: &str| -> Result<f32> {
         v.parse().map_err(|_| ConfigError::EnvVarError {
-            var: format!("CODERET_GRAPH_{}", field.to_uppercase()),
+            var: format!("EMRY_GRAPH_{}", field.to_uppercase()),
             message: format!("Invalid float: {}", v),
         })
     };
@@ -287,7 +287,7 @@ fn apply_graph_var(config: &mut GraphConfig, field: &str, value: &str) -> Result
     match field {
         "max_depth" => {
             config.max_depth = value.parse().map_err(|_| ConfigError::EnvVarError {
-                var: "CODERET_GRAPH_MAX_DEPTH".to_string(),
+                var: "EMRY_GRAPH_MAX_DEPTH".to_string(),
                 message: format!("Invalid integer: {}", value),
             })?;
         }
@@ -295,7 +295,7 @@ fn apply_graph_var(config: &mut GraphConfig, field: &str, value: &str) -> Result
         "path_weight" => config.path_weight = parse_float(value)?,
         _ => {
             return Err(ConfigError::EnvVarError {
-                var: format!("CODERET_GRAPH_{}", field.to_uppercase()),
+                var: format!("EMRY_GRAPH_{}", field.to_uppercase()),
                 message: format!("Unknown field: {}", field),
             })
         }
@@ -328,7 +328,7 @@ mod tests {
 
     fn cleanup_emry_env_vars() {
         let keys: Vec<String> = env::vars()
-            .filter(|(k, _)| k.starts_with("CODERET_"))
+            .filter(|(k, _)| k.starts_with("EMRY_"))
             .map(|(k, _)| k)
             .collect();
         for key in keys {
@@ -340,7 +340,7 @@ mod tests {
     fn test_search_mode_env() {
         let _lock = ENV_LOCK.lock().unwrap();
         cleanup_emry_env_vars();
-        env::set_var("CODERET_SEARCH_MODE", "semantic");
+        env::set_var("EMRY_SEARCH_MODE", "semantic");
         let config = from_env().unwrap().unwrap();
         assert_eq!(config.search.mode, SearchMode::Semantic);
         cleanup_emry_env_vars();
@@ -350,7 +350,7 @@ mod tests {
     fn test_chunking_max_tokens_env() {
         let _lock = ENV_LOCK.lock().unwrap();
         cleanup_emry_env_vars();
-        env::set_var("CODERET_CHUNKING_MAX_TOKENS", "1024");
+        env::set_var("EMRY_CHUNKING_MAX_TOKENS", "1024");
         let config = from_env().unwrap().unwrap();
         assert_eq!(config.chunking.max_tokens, 1024);
         cleanup_emry_env_vars();
