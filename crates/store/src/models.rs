@@ -30,6 +30,7 @@ pub struct SymbolRecord {
     pub file: Thing,
     pub start_line: usize,
     pub end_line: usize,
+    pub parent_scope: Option<String>,
 }
 
 // Edge Relations

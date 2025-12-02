@@ -2,6 +2,7 @@ mod models;
 
 use anyhow::Result;
 pub use models::{ChunkRecord, FileRecord, SymbolRecord, SurrealGraphNode, SurrealGraphEdge, CommitLogRecord};
+use emry_core::relations::RelationRef;
 use std::path::Path;
 use surrealdb::engine::local::RocksDb;
 use surrealdb::Surreal;
@@ -13,25 +14,23 @@ pub struct SurrealStore {
 }
 
 impl SurrealStore {
-    pub async fn new(path: &Path) -> Result<Self> {
+    pub async fn new(path: &Path, vector_dimension: usize) -> Result<Self> {
         let db = Surreal::new::<RocksDb>(path).await?;
         db.use_ns("emry").use_db("main").await?;
         
         // Initialize Schema
-        Self::init_schema(&db).await?;
+        Self::init_schema(&db, vector_dimension).await?;
         
         Ok(Self { db })
     }
 
-    async fn init_schema(db: &Surreal<surrealdb::engine::local::Db>) -> Result<()> {
-        // Vector Index
-        db.query("DEFINE INDEX chunk_embedding ON chunk FIELDS embedding HNSW DIMENSION 1536 DIST COSINE M 16 EFC 64").await?;
+    async fn init_schema(db: &Surreal<surrealdb::engine::local::Db>, vector_dimension: usize) -> Result<()> {
+        let query = format!("DEFINE INDEX chunk_embedding ON chunk FIELDS embedding HNSW DIMENSION {} DIST COSINE M 16 EFC 64", vector_dimension);
+        db.query(query).await?;
         
-        // Full-Text Index
         db.query("DEFINE ANALYZER code_analyzer TOKENIZERS class, blank FILTERS lowercase, ascii, snowball(english)").await?;
         db.query("DEFINE INDEX chunk_content ON chunk FIELDS content SEARCH ANALYZER code_analyzer BM25").await?;
         
-        // Unique Edge Indexes
         db.query("DEFINE INDEX unique_calls ON TABLE calls COLUMNS in, out UNIQUE").await?;
         db.query("DEFINE INDEX unique_imports ON TABLE imports COLUMNS in, out UNIQUE").await?;
         db.query("DEFINE INDEX unique_defines ON TABLE defines COLUMNS in, out UNIQUE").await?;
@@ -70,17 +69,12 @@ impl SurrealStore {
         symbols: Vec<SymbolRecord>,
         call_edges: Vec<(String, String)>,
     ) -> Result<()> {
-        // Transactional write logic (simplified for now)
-        
-        // 1. Upsert File
-        // eprintln!("Upserting file: {}", file.path);
         let mut file_content = file.clone();
         file_content.id = None;
         let _: Option<FileRecord> = self.db.upsert(("file", &file.path))
             .content(file_content)
             .await?;
             
-        // 2. Upsert Chunks
         for chunk in chunks {
             if let Some(id) = &chunk.id {
                  // id is a Thing, which has .tb (table) and .id (id)
@@ -97,7 +91,6 @@ impl SurrealStore {
             }
         }
         
-        // 3. Upsert Symbols
         for sym in &symbols {
             if let Some(id) = &sym.id {
                  let id_str = match &id.id {
@@ -112,16 +105,12 @@ impl SurrealStore {
             }
         }
         
-        // 4. Edges (Defines)
         for sym in &symbols {
             let _ = self.db.query("RELATE $file->defines->$symbol")
                 .bind(("file", file.id.clone()))
                 .bind(("symbol", sym.id.clone()))
                 .await;
         }
-
-        // 5. Edges (Calls)
-        // 5. Edges (Calls)
         for (caller_id, callee_name) in call_edges {
             // caller_id is a node ID (string), callee_name is a string name (potentially qualified)
             
@@ -141,48 +130,24 @@ impl SurrealStore {
                 .bind(("name", name.to_string()))
                 .await?;
             let candidates: Vec<SurrealGraphNode> = res.take(0)?;
-            
-            if name == "foo" {
-                // println!("DEBUG: Resolving call to 'foo'. Qualifier: {:?}. Candidates: {}", qualifier, candidates.len());
-            }
 
             let target_node = if let Some(qual) = qualifier {
                 // Filter candidates where file path contains the qualifier
-                // e.g. qual="std::fs", file_path=".../std/fs.rs" or similar
-                // Simple heuristic: check if qualifier parts are in file path
-                // For now, just check if file_path ends with qualifier (converted to path) or contains it
-                
-                // Normalize qualifier to path separators
                 let qual_path = qual.replace("::", "/").replace('.', "/");
                 
-                candidates.iter().find(|c| c.file_path.contains(&qual_path)).cloned()
-                    .or_else(|| {
-                        // Fallback: if no qualified match, maybe just pick the first one? 
-                        // Or maybe the qualifier was an alias?
-                        // For now, if we have a qualifier but no match, we might want to be conservative
-                        // But let's fallback to first candidate to maintain previous behavior if resolution fails
-                        if name == "foo" {
-                            // println!("DEBUG: No qualified match found for '{}' with path '{}'", name, qual_path);
-                        }
-                        candidates.first().cloned()
-                    })
+                candidates.iter()
+                    .find(|c| c.file_path.contains(&qual_path))
+                    .cloned()
+                    .or_else(|| candidates.first().cloned())
             } else {
-                // No qualifier, pick first candidate (ambiguous)
                 candidates.first().cloned()
             };
             
             if let Some(target) = target_node {
-                 if name == "foo" {
-                     // println!("DEBUG: Linked to target: {:?}", target.id);
-                 }
                  let _ = self.db.query("RELATE $from->calls->$to")
                     .bind(("from", surrealdb::sql::thing(&caller_id)?))
                     .bind(("to", target.id))
                     .await;
-            } else {
-                 if name == "foo" {
-                     // println!("DEBUG: No target found for 'foo'");
-                 }
             }
         }
         
@@ -207,7 +172,6 @@ impl SurrealStore {
         Ok(results)
     }
 
-    /// Pass 1: Add nodes (File, Chunk, Symbol)
     pub async fn add_file_nodes(
         &self,
         file: &FileRecord,
@@ -299,102 +263,313 @@ impl SurrealStore {
                 .bind(("to", symbol_thing))
                 .await;
         }
+
+        // 7. Link Parent Symbols to Child Symbols (Hierarchy)
+        for symbol in symbols {
+            if let Some(parent_name) = &symbol.parent_scope {
+                let file_path = match &symbol.file.id {
+                    surrealdb::sql::Id::String(s) => s.clone(),
+                    _ => symbol.file.id.to_string(),
+                };
+                
+                let parent_id_str = format!("{}::{}", file_path, parent_name);
+                let parent_thing = Thing::from(("symbol", parent_id_str.as_str()));
+                
+                let child_id_str = format!("{}::{}", file_path, symbol.name);
+                let child_thing = Thing::from(("symbol", child_id_str.as_str()));
+
+                let _ = self.db.query("RELATE $from->defines->$to")
+                    .bind(("from", parent_thing))
+                    .bind(("to", child_thing))
+                    .await;
+            }
+        }
         
         Ok(())
     }
 
-    /// Pass 2: Add edges (Calls, Imports)
-    pub async fn add_file_edges(
-        &self,
-        call_edges: &[(String, String)],
-        import_edges: &[(String, String)],
-    ) -> Result<()> {
-        // 1. Add Call Edges
-        for (caller_id, callee_name) in call_edges {
-            // Split callee_name into (qualifier, name)
-            // e.g. "std::fs::read" -> (Some("std::fs"), "read")
-            // e.g. "read" -> (None, "read")
-            let (qualifier, name) = if let Some(idx) = callee_name.rfind("::") {
-                (Some(&callee_name[0..idx]), &callee_name[idx+2..])
-            } else if let Some(idx) = callee_name.rfind('.') {
-                (Some(&callee_name[0..idx]), &callee_name[idx+1..])
+    /// Prioritize symbol candidates based on proximity to the caller.
+    /// Priority order:
+    /// 1. Same file (exact match)
+    /// 2. Same directory
+    /// 3. Parent directory
+    /// 4. First match (arbitrary fallback)
+    fn prioritize_candidate(
+        candidates: &[SurrealGraphNode],
+        caller_id: &str,
+    ) -> Option<SurrealGraphNode> {
+        if candidates.is_empty() {
+            return None;
+        }
+        
+        // Extract caller file path from ID
+        let caller_file = Self::extract_file_from_id(caller_id);
+        
+        // 1. Same file (highest priority)
+        if let Some(caller_path) = &caller_file {
+            if let Some(c) = candidates.iter().find(|c| &c.file_path == caller_path) {
+                return Some(c.clone());
+            }
+        }
+        
+        // 2. Same directory
+        if let Some(caller_path) = &caller_file {
+            if let Some(caller_dir) = std::path::Path::new(caller_path).parent() {
+                let caller_dir_str = caller_dir.to_string_lossy();
+                if let Some(c) = candidates.iter().find(|c| {
+                    std::path::Path::new(&c.file_path)
+                        .parent()
+                        .map(|p| p.to_string_lossy() == caller_dir_str)
+                        .unwrap_or(false)
+                }) {
+                    return Some(c.clone());
+                }
+            }
+        }
+        
+        // 3. Parent directory (one level up)
+        if let Some(caller_path) = &caller_file {
+            if let Some(caller_dir) = std::path::Path::new(caller_path).parent() {
+                if let Some(caller_parent) = caller_dir.parent() {
+                    let parent_str = caller_parent.to_string_lossy();
+                    if let Some(c) = candidates.iter().find(|c| {
+                        c.file_path.starts_with(parent_str.as_ref())
+                    }) {
+                        return Some(c.clone());
+                    }
+                }
+            }
+        }
+        
+        // 4. Fallback: first match
+        candidates.first().cloned()
+    }
+
+    /// Extract file path from node ID.
+    /// Examples:
+    /// - "symbol:⟨file_path::symbol_name⟩" -> Some("file_path")
+    /// - "symbol:file_path::symbol_name" -> Some("file_path")
+    /// - "chunk:uuid" -> None (chunks don't have predictable file info in ID)
+    fn extract_file_from_id(id: &str) -> Option<String> {
+        if let Some(rest) = id.strip_prefix("symbol:") {
+            // Handle angle bracket format: ⟨filepath::name⟩
+            let content = if rest.starts_with('⟨') && rest.ends_with('⟩') {
+                &rest[3..rest.len()-3] // Remove ⟨ and ⟩ (3 bytes each in UTF-8)
             } else {
-                (None, callee_name.as_str())
+                rest
             };
             
-            // Try to find specific symbol matching name AND qualifier (if present)
-            let mut res = self.db.query("SELECT id, name as label, kind, file.path as file_path FROM symbol WHERE name = $name")
-                .bind(("name", name.to_string()))
-                .await?;
-            
-            #[derive(Debug, serde::Deserialize)]
-            struct DebugGraphNode {
-                id: surrealdb::sql::Thing,
-                label: Option<String>,
-                kind: Option<String>,
-                file_path: Option<String>,
+            // Format: "file_path::symbol_name"
+            if let Some(idx) = content.rfind("::") {
+                return Some(content[..idx].to_string());
             }
+        }
+        None
+    }
 
-            let candidates: Vec<DebugGraphNode> = res.take(0)?;
-            
-            // eprintln!("DEBUG add_file_edges: Looking for '{}' (qual: {:?}) - found {} candidates", name, qualifier, candidates.len());
-            
-            let valid_candidates: Vec<SurrealGraphNode> = candidates.into_iter().filter_map(|c| {
-                if let (Some(label), Some(kind), Some(file_path)) = (c.label.clone(), c.kind.clone(), c.file_path.clone()) {
-                   Some(SurrealGraphNode {
-                        id: c.id,
-                        label,
-                        kind,
-                        file_path,
-                    })
-                } else {
-                    // eprintln!("DEBUG: Skipping invalid node for {}: {:?}", name, c);
-                    None
-                }
-            }).collect();
-            
-            // eprintln!("DEBUG add_file_edges: {} valid candidates for '{}'", valid_candidates.len(), name);
-            // for vc in &valid_candidates {
-            //     eprintln!("  Candidate: {} @ {}", vc.label, vc.file_path);
-            // }
-            
-            let target_node = if let Some(qual) = qualifier {
-                let qual_path = qual.replace("::", "/").replace('.', "/");
-                
-                // eprintln!("DEBUG add_file_edges: Looking for qualifier path: {}", qual_path);
-                
-                valid_candidates.iter().find(|c| c.file_path.contains(&qual_path)).cloned()
-                    .or_else(|| {
-                        valid_candidates.first().cloned()
-                    })
+    pub async fn add_file_edges(
+        &self,
+        call_edges: &[(String, RelationRef)],
+        import_edges: &[(String, RelationRef)],
+    ) -> Result<()> {
+        // 1. Build Local Scope Map from Imports
+        // Map: local_name -> full_import_path
+        let mut scope_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        
+        for (_, relation) in import_edges {
+            if let Some(alias) = &relation.alias {
+                // "import x as y" -> local="y", full="x"
+                scope_map.insert(alias.clone(), relation.name.clone());
             } else {
-                valid_candidates.first().cloned()
+                // "import x.y.z" -> local="z", full="x.y.z"
+                let name = &relation.name;
+                let local_name = if let Some(idx) = name.rfind("::") {
+                    &name[idx+2..]
+                } else if let Some(idx) = name.rfind('.') {
+                    &name[idx+1..]
+                } else if let Some(idx) = name.rfind('/') {
+                    &name[idx+1..]
+                } else {
+                    name.as_str()
+                };
+                scope_map.insert(local_name.to_string(), name.clone());
+            }
+        }
+        
+        // 2. Add Call Edges with Polyglot Resolution
+        for (caller_id, call) in call_edges {
+            let name = &call.name;
+            let context = &call.context; // e.g., "obj" in "obj.method()"
+
+            // RESOLUTION STRATEGY:
+            // 1. Context Resolution: If context exists, try to map it to a module/type.
+            // 2. Scope Resolution: If name is in scope, use full path.
+            // 3. Global Search: Fallback.
+
+            let target_node = if let Some(ctx) = context {
+                // Case A: Method call on an object/module (ctx.name())
+                
+                // Check if context is an alias in scope
+                // e.g. import mod as m; m.func() -> ctx="m", maps to "mod"
+                if let Some(full_module_path) = scope_map.get(ctx) {
+                    // We are looking for symbol 'name' in module 'full_module_path'
+                    // Query: name='name', file_path contains 'full_module_path'
+                    
+                    let mut res = self.db.query("SELECT id, name as label, kind, file.path as file_path FROM symbol WHERE name = $name")
+                        .bind(("name", name.to_string()))
+                        .await?;
+                    let candidates: Vec<SurrealGraphNode> = res.take(0)?;
+                    
+                    // Normalize path separators for matching
+                let mod_path_slash = if full_module_path.contains('/') {
+                    full_module_path.to_string()
+                } else {
+                    full_module_path.replace("::", "/").replace('.', "/")
+                };
+                
+                candidates.iter().find(|c| c.file_path.contains(&mod_path_slash)).cloned()
+                    .or_else(|| Self::prioritize_candidate(&candidates, caller_id))
+                } else {
+                    // Context is not an import alias. It might be a variable or a direct module name.
+                    // e.g. "std::fs::read()" -> ctx="std::fs" (if parser split it) or just name="std::fs::read"
+                    // Or "x.method()" where x is a local variable.
+                    
+                    // Try to find 'name' globally, filtering by context in file path
+                    let mut res = self.db.query("SELECT id, name as label, kind, file.path as file_path FROM symbol WHERE name = $name")
+                        .bind(("name", name.to_string()))
+                        .await?;
+                    let candidates: Vec<SurrealGraphNode> = res.take(0)?;
+                    
+                let ctx_slash = if ctx.contains('/') {
+                    ctx.to_string()
+                } else {
+                    ctx.replace("::", "/").replace('.', "/")
+                };
+                candidates.iter().find(|c| c.file_path.contains(&ctx_slash)).cloned()
+                     .or_else(|| Self::prioritize_candidate(&candidates, caller_id))
+                }
+            } else if let Some(full_path) = scope_map.get(name) {
+                // Case B: Direct call to imported symbol (name())
+                
+                // Extract symbol name from full path (last part)
+                let symbol_part = if let Some(idx) = full_path.rfind("::") {
+                    &full_path[idx+2..]
+                } else if let Some(idx) = full_path.rfind('.') {
+                    if full_path.contains('/') {
+                         if let Some(idx) = full_path.rfind('/') {
+                             &full_path[idx+1..]
+                         } else {
+                             full_path.as_str()
+                         }
+                    } else {
+                        &full_path[idx+1..]
+                    }
+                } else {
+                    full_path.as_str()
+                };
+                
+                // Extract module part (everything before)
+                let module_part = if let Some(idx) = full_path.rfind("::") {
+                    &full_path[..idx]
+                } else if let Some(idx) = full_path.rfind('.') {
+                     if full_path.contains('/') {
+                         if let Some(idx) = full_path.rfind('/') {
+                             &full_path[..idx]
+                         } else {
+                             ""
+                         }
+                     } else {
+                        &full_path[..idx]
+                     }
+                } else {
+                    ""
+                };
+                
+                let mut res = self.db.query("SELECT id, name as label, kind, file.path as file_path FROM symbol WHERE name = $name")
+                    .bind(("name", symbol_part.to_string()))
+                    .await?;
+                let candidates: Vec<SurrealGraphNode> = res.take(0)?;
+                
+                let mod_path_slash = if module_part.contains('/') {
+                    module_part.to_string()
+                } else {
+                    module_part.replace("::", "/").replace('.', "/")
+                };
+                
+                candidates.iter().find(|c| c.file_path.contains(&mod_path_slash)).cloned()
+                    .or_else(|| Self::prioritize_candidate(&candidates, caller_id))
+            } else {
+                // Case C: Global Search (No context, not in scope)
+                // e.g. "print()" or implicit global
+                
+                let mut res = self.db.query("SELECT id, name as label, kind, file.path as file_path FROM symbol WHERE name = $name")
+                    .bind(("name", name.to_string()))
+                    .await?;
+                let candidates: Vec<SurrealGraphNode> = res.take(0)?;
+                
+                // Priority: same file > same directory > parent directory > first match
+                Self::prioritize_candidate(&candidates, caller_id)
             };
             
             if let Some(target) = target_node {
-                 // eprintln!("DEBUG add_file_edges: Creating edge {} -> {}", caller_id, target.id);
                  let _ = self.db.query("RELATE $from->calls->$to")
                     .bind(("from", surrealdb::sql::thing(caller_id)?))
                     .bind(("to", target.id))
                     .await;
-            } else {
-                 // eprintln!("DEBUG add_file_edges: No target found for '{}'", callee_name);
             }
         }
         
-        // 2. Add Import Edges
-        for (importer_id, imported_name) in import_edges {
-             // For imports, we might want to link to a file or a module symbol
-             // For now, let's try to find a symbol with that name
-             // Similar logic to calls, but maybe less strict on qualifier?
-             // Or maybe imports ARE the qualifier?
-             // Let's keep it simple: find any symbol with that name
+        // 3. Add Import Edges
+        for (importer_id, relation) in import_edges {
+             let full_path = &relation.name;
              
-             // TODO: Enhance import resolution
-             let mut res = self.db.query("SELECT id, name as label, kind, file.path as file_path FROM symbol WHERE name = $name LIMIT 1")
-                .bind(("name", imported_name.to_string()))
+             // Extract symbol part for query
+             let symbol_part = if let Some(idx) = full_path.rfind("::") {
+                &full_path[idx+2..]
+            } else if let Some(idx) = full_path.rfind('.') {
+                 if full_path.contains('/') {
+                     if let Some(idx) = full_path.rfind('/') {
+                         &full_path[idx+1..]
+                     } else {
+                         full_path.as_str()
+                     }
+                 } else {
+                    &full_path[idx+1..]
+                 }
+            } else {
+                full_path.as_str()
+            };
+            
+            // Extract module part for filtering
+            let module_part = if let Some(idx) = full_path.rfind("::") {
+                &full_path[..idx]
+            } else if let Some(idx) = full_path.rfind('.') {
+                 if full_path.contains('/') {
+                     if let Some(idx) = full_path.rfind('/') {
+                         &full_path[..idx]
+                     } else {
+                         ""
+                     }
+                 } else {
+                    &full_path[..idx]
+                 }
+            } else {
+                ""
+            };
+            
+             let mut res = self.db.query("SELECT id, name as label, kind, file.path as file_path FROM symbol WHERE name = $name")
+                .bind(("name", symbol_part.to_string()))
                 .await?;
-             let target: Option<SurrealGraphNode> = res.take(0)?;
+             let candidates: Vec<SurrealGraphNode> = res.take(0)?;
+             
+             let mod_path_slash = if module_part.contains('/') {
+                module_part.to_string()
+            } else {
+                module_part.replace("::", "/").replace('.', "/")
+            };
+            
+             let target = candidates.iter().find(|c| c.file_path.contains(&mod_path_slash)).cloned()
+                .or_else(|| Self::prioritize_candidate(&candidates, importer_id));
              
              if let Some(t) = target {
                  let _ = self.db.query("RELATE $from->imports->$to")
@@ -511,9 +686,9 @@ impl SurrealStore {
     }
 
     pub async fn get_neighbors(&self, id: &str, direction: &str) -> Result<Vec<SurrealGraphEdge>> {
+        
         let thing = surrealdb::sql::thing(id)?;
         
-        // Simplified approach: Just return edges with IDs.
         let sql = match direction {
             "out" => "SELECT in as source, out as target, type::table(id) as relation FROM $id->?",
             "in" => "SELECT in as source, out as target, type::table(id) as relation FROM $id<-?",
@@ -545,6 +720,15 @@ impl SurrealStore {
             .await?;
         let file: Option<FileRecord> = res.take(0)?;
         Ok(file)
+    }
+
+    pub async fn get_chunk(&self, id: &str) -> Result<Option<ChunkRecord>> {
+        let thing = surrealdb::sql::thing(id)?;
+        let mut res = self.db.query("SELECT * FROM $id")
+            .bind(("id", thing))
+            .await?;
+        let chunk: Option<ChunkRecord> = res.take(0)?;
+        Ok(chunk)
     }
 
     pub async fn count_files(&self) -> Result<usize> {

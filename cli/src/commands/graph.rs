@@ -52,15 +52,20 @@ impl From<GraphDirection> for ToolGraphDirection {
     }
 }
 
+use emry_agent::project::embedder::get_embedding_dimension;
+
 pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result<()> {
+    use super::ui;
+
+    ui::print_header(&format!("Graph: {}", args.node));
+
     let ctx = agent_context::RepoContext::from_env(config_path).await?;
     
-    // Initialize SurrealStore if not already in context (it should be)
-    // But we need to make sure ctx has it.
-    // If ctx.surreal_store is None, we try to init it.
+    // Initialize SurrealStore if not already in context
     let ctx = if ctx.surreal_store.is_none() {
         let surreal_path = ctx.index_dir.join("surreal.db");
-        let surreal_store = Arc::new(SurrealStore::new(&surreal_path).await?);
+        let vector_dim = get_embedding_dimension(&ctx.config.embedding);
+        let surreal_store = Arc::new(SurrealStore::new(&surreal_path, vector_dim).await?);
         let mut ctx = ctx;
         ctx.surreal_store = Some(surreal_store);
         Arc::new(ctx)
@@ -142,14 +147,7 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
             
             // Filter chunks if not showing chunks
             if !args.show_chunks {
-                // This is tricky because removing nodes might break edges.
-                // The previous implementation had complex logic to traverse through chunks.
-                // For now, let's just hide chunk nodes and edges connected to them?
-                // Or just keep it simple and show everything.
-                // Let's filter out chunk nodes from display list at least.
-                // But edges will point to missing nodes.
-                // Ideally GraphTool should support this.
-                // For now, we print what we have.
+
             }
 
             if args.json {
@@ -166,7 +164,7 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
             if args.json {
                 println!("{}", serde_json::json!({ "error": e.to_string() }));
             } else {
-                eprintln!("Error: {}", e);
+                ui::print_error(&format!("Error: {}", e));
             }
         }
     }
@@ -175,6 +173,15 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
 }
 
 fn print_subgraph(subgraph: &GraphSubgraph, source_node: &str) {
+    use console::Style;
+    use std::collections::HashMap;
+
+    let node_labels: HashMap<&str, &str> = subgraph
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n.label.as_str()))
+        .collect();
+
     let neighbors: Vec<_> = subgraph
         .nodes
         .iter()
@@ -184,17 +191,51 @@ fn print_subgraph(subgraph: &GraphSubgraph, source_node: &str) {
     println!(
         "\nFound {} neighbors for '{}':",
         neighbors.len(),
-        source_node
+        Style::new().bold().cyan().apply_to(source_node)
     );
 
     for (i, node) in neighbors.iter().enumerate() {
-        println!("{}: {} ({})", i + 1, node.label, node.id);
+        println!(
+            "{} {} ({})",
+            Style::new().dim().apply_to(format!("{}.", i + 1)),
+            Style::new().bold().apply_to(&node.label),
+            Style::new().dim().apply_to(&node.id)
+        );
     }
 
     if !subgraph.edges.is_empty() {
         println!("\nEdges:");
         for edge in &subgraph.edges {
-            println!("  - {} -[{}]-> {}", edge.source, edge.kind, edge.target);
+            let kind_style = match edge.kind.as_str() {
+                "calls" => Style::new().yellow(),
+                "imports" => Style::new().magenta(),
+                "defines" => Style::new().blue(),
+                _ => Style::new().white(),
+            };
+
+            let source_label = node_labels
+                .get(edge.source.as_str())
+                .copied()
+                .unwrap_or(edge.source.as_str());
+            let target_label = node_labels
+                .get(edge.target.as_str())
+                .copied()
+                .unwrap_or(edge.target.as_str());
+
+            println!(
+                "  {} {} {}",
+                format!(
+                    "{} ({})",
+                    Style::new().bold().apply_to(source_label),
+                    Style::new().dim().apply_to(&edge.source)
+                ),
+                kind_style.apply_to(format!("-[{}]->", edge.kind)),
+                format!(
+                    "{} ({})",
+                    Style::new().bold().apply_to(target_label),
+                    Style::new().dim().apply_to(&edge.target)
+                )
+            );
         }
     }
 }

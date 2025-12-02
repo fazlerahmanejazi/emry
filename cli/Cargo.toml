@@ -16,7 +16,6 @@ emry-engine = { path = "../crates/engine" }
 emry-agent = { path = "../crates/agent" }
 emry-store = { path = "../crates/store" }
 tokio = { workspace = true }
-walkdir = "2.4"
 globset = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -24,7 +23,6 @@ hex = { workspace = true }
 regex = "1.10"
 serde = { workspace = true }
 ignore = { workspace = true }
-rayon = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

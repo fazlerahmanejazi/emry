@@ -32,7 +32,6 @@ impl Cortex {
         self.ctx.history.clear();
         let max_steps = 10;
         
-        // 1. Initialize Messages
         let mut messages = Vec::new();
         
         // System Message
@@ -69,11 +68,9 @@ impl Cortex {
             content: user_content,
         });
 
-        // 2. The Loop
         for step_count in 1..=max_steps {
             on_event(CortexEvent::StepStart(step_count));
 
-            // a. Define Schema
             let schema = serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -85,7 +82,6 @@ impl Cortex {
                 "additionalProperties": false
             });
 
-            // b. Call LLM
             let response = self.llm.chat_with_schema(
                 &messages,
                 crate::llm::JsonSchemaSpec {
@@ -94,7 +90,6 @@ impl Cortex {
                 }
             ).await?;
             
-            // c. Parse Response
             let step_data: serde_json::Value = serde_json::from_str(&response)
                 .or_else(|_| serde_json::from_str(response.trim()))
                 .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}. Raw response: '{}'", e, response))?;
@@ -111,7 +106,6 @@ impl Cortex {
                 content: response.clone(),
             });
 
-            // d. Check for Final Answer
             if action == "final_answer" {
                 let answer = &args["answer"];
                 return Ok(if answer.is_string() {
@@ -123,7 +117,6 @@ impl Cortex {
             
             on_event(CortexEvent::ToolCall { name: action.clone(), args: args.clone() });
 
-            // e. Execute Tool
             let tool_name = action.clone();
             let tool_result = if let Some(tool) = self.ctx.tools.get(&tool_name) {
                 match tool.execute(args.clone()).await {
@@ -142,7 +135,6 @@ impl Cortex {
                 content: format!("Observation: {}", tool_result),
             });
 
-            // f. Update History (Internal Context)
             self.ctx.add_step(crate::cortex::context::Step {
                 step_id: step_count,
                 thought: thought.clone(),
@@ -152,7 +144,6 @@ impl Cortex {
                 error: None,
             });
             
-            // g. Check for Max Steps
             if self.ctx.history.len() >= max_steps {
                 return Ok("Reached maximum steps without final answer.".to_string());
             }

@@ -1,16 +1,19 @@
 pub mod ask;
-pub mod explain;
+
 pub mod graph;
 pub mod index;
+pub mod inspect;
 pub mod regex_utils;
 pub mod search;
 pub mod status;
+pub mod ui;
 pub mod utils;
 
 pub use ask::handle_ask;
-pub use explain::handle_explain;
+
 pub use graph::{handle_graph, GraphArgs};
 pub use index::handle_index;
+pub use inspect::{handle_inspect, InspectArgs};
 pub use search::{handle_search, CliSearchMode};
 pub use status::handle_status;
 
@@ -69,6 +72,10 @@ pub enum Commands {
         /// Do not apply ignore rules (gitignore/config) for regex/grep search
         #[arg(long, default_value_t = false)]
         no_ignore: bool,
+
+        /// Enable smart search (Query Rewriting + Subgraph Retrieval)
+        #[arg(long, default_value_t = false)]
+        smart: bool,
     },
     /// Ask about codebase in natural language
     Ask {
@@ -82,12 +89,7 @@ pub enum Commands {
     Graph(GraphArgs),
     /// Show status (not yet implemented)
     Status,
-    /// Explain resolution of a reference
-    Explain {
-        /// The location of the reference (file:line:col)
-        location: String,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
+    /// Inspect a node by ID
+    Inspect(InspectArgs),
+
 }

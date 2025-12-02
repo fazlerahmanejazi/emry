@@ -3,6 +3,7 @@ use emry_core::chunking::{GenericChunker, Chunker};
 use emry_core::models::Language;
 use emry_core::symbols::extract_symbols;
 use emry_core::traits::Embedder;
+use emry_core::relations::RelationRef;
 use emry_store::{SurrealStore, FileRecord, ChunkRecord, SymbolRecord};
 use std::path::Path;
 use std::sync::Arc;
@@ -12,6 +13,40 @@ use super::pipeline::compute_hash;
 pub struct IngestionService {
     store: Arc<SurrealStore>,
     embedder: Option<Arc<dyn Embedder + Send + Sync>>,
+}
+
+pub struct IngestionContext {
+    pub file: super::pipeline::PreparedFile,
+    pub id_map: std::collections::HashMap<String, String>,
+    pub chunk_to_symbol: std::collections::HashMap<String, String>,
+}
+
+impl IngestionContext {
+    pub fn new(file: super::pipeline::PreparedFile) -> Self {
+        let file_id_str = file.path.to_string_lossy().to_string();
+        
+        let mut id_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        
+        for s in &file.symbols {
+            let new_id_str = format!("{}::{}", file_id_str, s.name);
+            let new_id_thing = Thing::from(("symbol", new_id_str.as_str()));
+            id_map.insert(s.id.clone(), new_id_thing.to_string());
+        }
+        
+        let mut chunk_to_symbol = std::collections::HashMap::new();
+        for (cid, sid) in &file.chunk_symbol_edges {
+            if let Some(symbol_storage_id) = id_map.get(sid) {
+                 let chunk_thing = Thing::from(("chunk", cid.as_str()));
+                 chunk_to_symbol.insert(chunk_thing.to_string(), symbol_storage_id.clone());
+            }
+        }
+
+        Self {
+            file,
+            id_map,
+            chunk_to_symbol,
+        }
+    }
 }
 
 impl IngestionService {
@@ -28,13 +63,10 @@ impl IngestionService {
             file_path.extension().and_then(|e| e.to_str()).unwrap_or("")
         );
         
-        // 1. Chunking
-        // We need a default config for now
         let chunking_config = emry_config::ChunkingConfig::default();
         let chunker = GenericChunker::with_config(language.clone(), chunking_config);
         let core_chunks = chunker.chunk(content, file_path)?;
         
-        // 2. Embedding (Global/Batch usually, but here per file for simplicity in MVP)
         let mut chunks_with_embeddings = core_chunks.clone();
         if let Some(embedder) = &self.embedder {
             let texts: Vec<String> = core_chunks.iter().map(|c| c.content.clone()).collect();
@@ -47,10 +79,8 @@ impl IngestionService {
             }
         }
         
-        // 3. Symbol Extraction
         let core_symbols = extract_symbols(content, file_path, &language).unwrap_or_default();
         
-        // 4. Convert to Store Records
         let file_id = Thing::from(("file", path));
         
         let file_record = FileRecord {
@@ -59,12 +89,12 @@ impl IngestionService {
             language: language.to_string(),
             content: content.to_string(),
             hash: compute_hash(content),
-            last_modified: 0, // TODO
+            last_modified: 0,
         };
         
         let chunk_records: Vec<ChunkRecord> = chunks_with_embeddings.into_iter().map(|c| {
             ChunkRecord {
-                id: None, // Let DB generate UUID
+                id: None,
                 content: c.content,
                 embedding: c.embedding.filter(|v| !v.is_empty()),
                 file: file_id.clone(),
@@ -82,21 +112,21 @@ impl IngestionService {
                 file: file_id.clone(),
                 start_line: s.start_line,
                 end_line: s.end_line,
+                parent_scope: s.parent_scope,
             }
         }).collect();
         
-        // 5. Save to Store
         self.store.add_file(file_record, chunk_records, symbol_records, Vec::new()).await?;
         
         Ok(())
     }
 
     /// Pass 1: Ingest nodes (File, Chunk, Symbol)
-    pub async fn ingest_nodes(&self, file: super::pipeline::PreparedFile) -> Result<()> {
+    pub async fn ingest_nodes(&self, ctx: &IngestionContext) -> Result<()> {
+        let file = &ctx.file;
         let file_id_str = file.path.to_string_lossy().to_string();
         let file_id = Thing::from(("file", file_id_str.as_str()));
 
-        // 1. Create File Record
         let file_record = FileRecord {
             id: Some(file_id.clone()),
             path: file.path.to_string_lossy().to_string(),
@@ -106,9 +136,6 @@ impl IngestionService {
             last_modified: file.last_modified as i64,
         };
 
-        // 2. Create Chunk Records
-        // We need to embed chunks if they haven't been embedded yet (e.g. single file ingest)
-        // But for pipeline, they are already embedded.
         let chunks_with_embeddings = if file.chunks.iter().any(|c| c.embedding.is_none()) {
              if let Some(embedder) = &self.embedder {
                  let core_chunks = file.chunks.clone();
@@ -140,7 +167,6 @@ impl IngestionService {
             }
         }).collect();
 
-        // 3. Create Symbol Records
         let symbol_records: Vec<SymbolRecord> = file.symbols.iter().map(|s| {
             let new_id_str = format!("{}::{}", file.path.to_string_lossy(), s.name);
             let new_id_thing = Thing::from(("symbol", new_id_str.as_str()));
@@ -149,37 +175,18 @@ impl IngestionService {
                 id: Some(new_id_thing),
                 name: s.name.clone(),
                 kind: s.kind.clone(),
-                file: file_id.clone(),  // Use the simple path-based file ID
+                file: file_id.clone(),
                 start_line: s.start_line,
                 end_line: s.end_line,
+                parent_scope: s.parent_scope.clone(),
             }
         }).collect();
         
-        // 4. Build ID map and Chunk->Symbol map
-        let mut id_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        
-        // Map symbol IDs
-        for s in &file.symbols {
-            let new_id_str = format!("{}::{}", file.path.to_string_lossy(), s.name);
-            let new_id_thing = Thing::from(("symbol", new_id_str.as_str()));
-            id_map.insert(s.id.clone(), new_id_thing.to_string());
-        }
-        
-        // Build chunk -> symbol map for hoisting
-        let mut chunk_to_symbol = std::collections::HashMap::new();
-        for (cid, sid) in &file.chunk_symbol_edges {
-            if let Some(symbol_storage_id) = id_map.get(sid) {
-                 // We need the chunk storage ID here
-                 let chunk_thing = Thing::from(("chunk", cid.as_str()));
-                 chunk_to_symbol.insert(chunk_thing.to_string(), symbol_storage_id.clone());
-            }
-        }
-
         self.store.add_file_nodes(
             &file_record,
             &chunk_records,
             &symbol_records,
-            &chunk_to_symbol
+            &ctx.chunk_to_symbol
         ).await?;
         
         Ok(())
@@ -187,68 +194,47 @@ impl IngestionService {
         
 
 
-
     /// Pass 2: Ingest edges (Calls, Imports)
-    pub async fn ingest_edges(&self, file: super::pipeline::PreparedFile) -> Result<()> {
+    pub async fn ingest_edges(&self, ctx: &IngestionContext) -> Result<()> {
+        let file = &ctx.file;
         let file_id_str = file.path.to_string_lossy().to_string();
         let _file_id = Thing::from(("file", file_id_str.as_str()));
         
-        // We need to rebuild the ID map to translate edges
-        // This is a bit redundant but safe. In a more optimized version we could cache this.
-        let mut id_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        
-        // Map symbol IDs
-        for s in &file.symbols {
-            let new_id_str = format!("{}::{}", file.path.to_string_lossy(), s.name);
-            let new_id_thing = Thing::from(("symbol", new_id_str.as_str()));
-            id_map.insert(s.id.clone(), new_id_thing.to_string());
-        }
-        
-        // Build chunk -> symbol map for hoisting
-        let mut chunk_to_symbol = std::collections::HashMap::new();
-        for (cid, sid) in &file.chunk_symbol_edges {
-            if let Some(symbol_storage_id) = id_map.get(sid) {
-                 let chunk_thing = Thing::from(("chunk", cid.as_str()));
-                 chunk_to_symbol.insert(chunk_thing.to_string(), symbol_storage_id.clone());
-            }
-        }
+        // Use cached maps
+        let id_map = &ctx.id_map;
+        let chunk_to_symbol = &ctx.chunk_to_symbol;
 
         // Translate edges
-        let translated_edges: Vec<(String, String)> = file.call_edges.into_iter().filter_map(|(caller, callee)| {
-            // 1. Try to hoist: Check if caller is a chunk that belongs to a symbol
-            if let Some(symbol_id) = chunk_to_symbol.get(&caller) {
-                return Some((symbol_id.clone(), callee));
+        let translated_edges: Vec<(String, RelationRef)> = file.call_edges.iter().filter_map(|(caller, relation)| {
+            if let Some(symbol_id) = chunk_to_symbol.get(caller) {
+                return Some((symbol_id.clone(), relation.clone()));
             }
             
-            // 2. Fallback: Direct mapping (Symbol -> Symbol or Top-level Chunk -> Target)
-            if let Some(new_caller) = id_map.get(&caller) {
-                Some((new_caller.clone(), callee))
+            if let Some(new_caller) = id_map.get(caller) {
+                Some((new_caller.clone(), relation.clone()))
             } else {
-                // If caller is not found in map, it might be the file itself or something else.
-                // For now we skip untranslatable callers to avoid bad edges
                 None
             }
         }).collect();
 
         // Translate import edges
-        let translated_import_edges: Vec<(String, String)> = file.import_edges.into_iter().filter_map(|(importer, imported)| {
-             // Importer is usually a symbol or file node ID from the pipeline
+        let translated_import_edges: Vec<(String, RelationRef)> = file.import_edges.iter().filter_map(|(importer, relation)| {
+             // Importer is usually a symbol, chunk, or file node ID from the pipeline
              
-             if let Some(new_importer) = id_map.get(&importer) {
-                 Some((new_importer.clone(), imported))
-             } else if importer == file.file_node_id {
-                 // If importer is the file itself, map to storage file ID
+             if let Some(symbol_id) = chunk_to_symbol.get(importer) {
+                 return Some((symbol_id.clone(), relation.clone()));
+             }
+
+             if let Some(new_importer) = id_map.get(importer) {
+                 Some((new_importer.clone(), relation.clone()))
+             } else if importer == &file.file_node_id {
                  let file_thing = Thing::from(("file", file_id_str.as_str()));
-                 Some((file_thing.to_string(), imported))
+                 Some((file_thing.to_string(), relation.clone()))
              } else {
-                 None
+                 let chunk_thing = Thing::from(("chunk", importer.as_str()));
+                 Some((chunk_thing.to_string(), relation.clone()))
              }
         }).collect();
-        
-        // eprintln!("DEBUG ingest_edges for {}: {} translated edges", file.path.display(), translated_edges.len());
-        // for (caller, callee) in &translated_edges {
-        //     eprintln!("  {} -> {}", caller, callee);
-        // }
         
         self.store.add_file_edges(&translated_edges, &translated_import_edges).await?;
         Ok(())

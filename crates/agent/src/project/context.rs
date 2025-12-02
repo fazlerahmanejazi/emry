@@ -1,4 +1,4 @@
-use super::embedder::select_embedder;
+use super::embedder::{select_embedder, get_embedding_dimension};
 use anyhow::{anyhow, Context, Result};
 use emry_config::Config;
 use std::path::{Path, PathBuf};
@@ -36,10 +36,11 @@ impl RepoContext {
 
         // Try to initialize embedder using config/environment.
         let embedder = select_embedder(&config.embedding).await.ok();
+        let vector_dim = get_embedding_dimension(&config.embedding);
 
         // Initialize SurrealStore
         let surreal_path = index_dir.join("surreal.db");
-        let surreal_store = emry_store::SurrealStore::new(&surreal_path).await.ok().map(Arc::new);
+        let surreal_store = emry_store::SurrealStore::new(&surreal_path, vector_dim).await.ok().map(Arc::new);
 
         Ok(Self {
             root,

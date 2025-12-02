@@ -7,7 +7,6 @@ fn main() {
     let suffix_len = total_width.saturating_sub(prefix.len() + 1); // +1 for '┐'
     let suffix = "─".repeat(suffix_len);
     let header = format!("{}{}┐", prefix, suffix);
-    println!("Header Length: {}", header.chars().count());
     println!("{}", header);
 
     let text = "Test Line";
@@ -21,10 +20,8 @@ fn main() {
         " ".repeat(padding),
         "│"
     );
-    println!("Body Length: {}", body.chars().count());
     println!("{}", body);
 
     let bottom = "└──────────────────────────────────────────────────────────────────────────────┘";
-    println!("Bottom Length: {}", bottom.chars().count());
     println!("{}", bottom);
 }

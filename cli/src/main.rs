@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
             match commands::handle_index(full, cli.config.as_deref()).await {
                 Ok(_) => 0,
                 Err(e) => {
-                    eprintln!("Index failed: {}", e);
+                    commands::ui::print_error(&format!("Index failed: {}", e));
                     1
                 }
             }
@@ -34,6 +34,7 @@ async fn main() -> Result<()> {
 
             regex,
             no_ignore,
+            smart,
         } => match commands::handle_search(
             query,
             cli.config.as_deref(),
@@ -45,12 +46,13 @@ async fn main() -> Result<()> {
 
             regex,
             no_ignore,
+            smart,
         )
         .await
         {
             Ok(_) => 0,
             Err(e) => {
-                eprintln!("Search failed: {}", e);
+                commands::ui::print_error(&format!("Search failed: {}", e));
                 1
             }
         },
@@ -58,7 +60,7 @@ async fn main() -> Result<()> {
             match commands::handle_ask(query, verbose, cli.config.as_deref()).await {
                 Ok(_) => 0,
                 Err(e) => {
-                    eprintln!("Ask failed: {}", e);
+                    commands::ui::print_error(&format!("Ask failed: {}", e));
                     1
                 }
             }
@@ -66,26 +68,25 @@ async fn main() -> Result<()> {
         Commands::Graph(args) => match commands::handle_graph(args, cli.config.as_deref()).await {
             Ok(_) => 0,
             Err(e) => {
-                eprintln!("Graph command failed: {}", e);
+                commands::ui::print_error(&format!("Graph command failed: {}", e));
                 1
             }
         },
         Commands::Status => match commands::handle_status(cli.config.as_deref()).await {
             Ok(_) => 0,
             Err(e) => {
-                eprintln!("Status failed: {}", e);
+                commands::ui::print_error(&format!("Status failed: {}", e));
                 1
             }
         },
-        Commands::Explain { location, json } => {
-            match commands::handle_explain(location, json).await {
-                Ok(_) => 0,
-                Err(e) => {
-                    eprintln!("Explain failed: {}", e);
-                    1
-                }
+        Commands::Inspect(args) => match commands::handle_inspect(args, cli.config.as_deref()).await {
+            Ok(_) => 0,
+            Err(e) => {
+                commands::ui::print_error(&format!("Inspect failed: {}", e));
+                1
             }
-        }
+        },
+
     };
 
     std::process::exit(exit_code);

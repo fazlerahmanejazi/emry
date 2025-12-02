@@ -2,18 +2,17 @@ use crate::project::context::RepoContext;
 use crate::project::types::SymbolHit;
 use anyhow::Result;
 use emry_core::models::{Language, ScoredChunk};
-// use emry_core::ranking::RankConfig; // Unused for now
 use emry_engine::search::service::SearchService;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde::Serialize; // Added import
+use serde::Serialize;
 
 pub struct Search {
     service: Arc<SearchService>,
 }
 
-#[derive(Debug, Clone, Serialize)] // Added Serialize
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchResult {
     pub chunks: Vec<ScoredChunk>,
     pub symbols: Vec<SymbolHit>,
@@ -25,27 +24,26 @@ impl Search {
     }
 
     pub async fn search(&self, query: &str, limit: usize) -> Result<SearchResult> {
-        // let cfg = rank_cfg(&self.ctx.config);
-        let results = self.service.search(query, limit).await?;
+        let results = self.service.search(query, limit, None).await?;
         
         let chunks: Vec<ScoredChunk> = results.into_iter().map(|c| {
             ScoredChunk {
                 chunk: emry_core::models::Chunk {
                     id: c.id.map(|t| t.to_string()).unwrap_or_default(),
-                    file_path: std::path::PathBuf::from(c.file.id.to_string()), // TODO: Fix Thing parsing
+                    file_path: std::path::PathBuf::from(c.file.id.to_string()),
                     start_line: c.start_line,
                     end_line: c.end_line,
                     content: c.content,
-                    content_hash: "".to_string(), // TODO
+                    content_hash: "".to_string(),
                     embedding: c.embedding,
                     scope_path: c.scopes,
-                    language: Language::Unknown, // TODO
+                    language: Language::Unknown,
                     start_byte: None,
                     end_byte: None,
                     node_type: "".to_string(),
                     parent_scope: None,
                 },
-                score: 1.0, // TODO
+                score: 1.0,
                 lexical_score: None,
                 vector_score: None,
                 graph_boost: None,
@@ -92,12 +90,18 @@ impl Search {
                         fqn: node.label.clone(),
                         language: language.clone(),
                         doc_comment: None,
+                        parent_scope: None,
                     },
                 });
             }
         }
 
         Ok(SearchResult { chunks, symbols })
+    }
+
+    pub async fn search_with_context(&self, query: &str, limit: usize, _smart: bool) -> Result<emry_core::models::ContextGraph> {
+        // Use smart search if requested, but currently we rely on service defaults or CLI handling.
+        self.service.search_with_context(query, limit, None).await
     }
 
     /// Heuristic entry points: symbols named main/run/serve.
@@ -141,6 +145,7 @@ impl Search {
                         fqn: node.label.clone(),
                         language: language.clone(),
                         doc_comment: None,
+                        parent_scope: None,
                     },
                 });
             }

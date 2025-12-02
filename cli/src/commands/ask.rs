@@ -19,21 +19,23 @@ use std::sync::Arc;
 use super::utils::render_markdown_answer;
 
 pub async fn handle_ask(query: String, verbose: bool, config_path: Option<&Path>) -> Result<()> {
+    use super::ui;
+    use console::Style;
+
     if verbose {
-        println!("{}", console::style(format!("Query: {}", query)).bold().magenta());
+        ui::print_header(&format!("Query: {}", query));
     }
 
     let ctx = Arc::new(agent_context::RepoContext::from_env(config_path).await?);
     
     // Initialize SurrealStore & SearchService
-    // Initialize SurrealStore & SearchService
+
     // Reuse store from context if available, or error out
     let surreal_store = ctx.surreal_store.clone()
         .ok_or_else(|| anyhow::anyhow!("SurrealStore not initialized in context"))?;
     let search_service = Arc::new(SearchService::new(surreal_store.clone(), ctx.embedder.clone()));
     
-    // Legacy Manager (kept for now if needed)
-    // let manager = Arc::new(IndexManager::new(...));
+
 
     // Initialize AgentContext
     let mut agent_ctx = AgentContext::new(
@@ -69,81 +71,28 @@ pub async fn handle_ask(query: String, verbose: bool, config_path: Option<&Path>
         if verbose {
             match event {
                 emry_agent::cortex::CortexEvent::StepStart(step) => {
-                    if step > 1 {
-                        print_bottom_border();
-                    }
-                    print_step_header(step);
+                    println!("\n{}", Style::new().dim().apply_to(format!("── Step {} ──", step)));
                 }
                 emry_agent::cortex::CortexEvent::Thought(thought) => {
-                    let skin = termimad::MadSkin::default();
-                    print_boxed_line("Thought:", console::Style::new().bold().green());
-                    let fmt_text = skin.text(&thought, Some(74)).to_string();
-                    for line in fmt_text.lines() {
-                        print_aligned_line(line, console::Style::new());
-                    }
-                    print_aligned_line("", console::Style::new());
+                    ui::print_panel("Thought", &thought, Style::new().green(), Some(Style::new().dim()));
                 }
                 emry_agent::cortex::CortexEvent::ToolCall { name, args } => {
-                    print_boxed_line("Tool Call:", console::Style::new().bold().yellow());
-                    print_boxed_line(&format!("{}({})", name, args), console::Style::new().bold());
-                    print_aligned_line("", console::Style::new());
+                    ui::print_panel("Tool Call", &format!("{}({})", name, args), Style::new().yellow(), Some(Style::new().dim()));
                 }
                 emry_agent::cortex::CortexEvent::ToolResult { name: _, result } => {
-                     print_boxed_line("Observation:", console::Style::new().bold().blue());
                      let truncated = if result.len() > 300 {
                          format!("{}...", &result[..300])
                      } else {
                          result
                      };
-                     for line in truncated.lines() {
-                        print_boxed_line(line, console::Style::new());
-                     }
+                     ui::print_panel("Observation", &truncated, Style::new().blue(), Some(Style::new().dim()));
                 }
             }
         }
     }).await?;
     
-    if verbose {
-        print_bottom_border();
-    }
-
-    println!("\n{}\n{}", console::style("Final Answer:").bold().magenta(), render_markdown_answer(&answer));
+    ui::print_header("Final Answer");
+    println!("{}", render_markdown_answer(&answer));
 
     Ok(())
-}
-
-fn print_step_header(step: usize) {
-    let prefix = format!("┌── Step {} ", step);
-    let total_width: usize = 86;
-    let suffix_len = total_width.saturating_sub(prefix.len() + 1);
-    let suffix = "─".repeat(suffix_len);
-    println!("{}", console::style(format!("{}{}┐", prefix, suffix)).dim());
-}
-
-fn print_bottom_border() {
-    let total_width: usize = 80;
-    let suffix_len = total_width.saturating_sub(2);
-    let suffix = "─".repeat(suffix_len);
-    println!("{}", console::style(format!("└{}┘", suffix)).dim());
-}
-
-fn print_boxed_line(text: &str, style: console::Style) {
-    let width = 76;
-    let wrapped = textwrap::wrap(text, width);
-    for line in wrapped {
-        print_aligned_line(&line, style.clone());
-    }
-}
-
-fn print_aligned_line(text: &str, style: console::Style) {
-    let width: usize = 76;
-    let visual_len = console::measure_text_width(text);
-    let padding = width.saturating_sub(visual_len);
-    println!(
-        "{} {} {}{}",
-        console::style("│").dim(),
-        style.apply_to(text),
-        " ".repeat(padding),
-        console::style("│").dim()
-    );
 }

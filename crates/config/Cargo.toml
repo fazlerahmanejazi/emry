@@ -2,7 +2,7 @@
 name = "emry-config"
 version = "0.1.0"
 edition = "2021"
-authors = ["Code Retriever Team"]
+authors = ["Emry"]
 description = "Configuration management for emry with validation and multi-format support"
 license = "MIT"
 

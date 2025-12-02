@@ -15,15 +15,13 @@ impl TagsExtractor {
     pub fn new() -> Result<Self> {
         let mut configs = HashMap::new();
         
-        // Rust - use built-in TAGS_QUERY from tree-sitter-rust  
         let rust_config = TagsConfiguration::new(
             tree_sitter_rust::LANGUAGE.into(),
             tree_sitter_rust::TAGS_QUERY,
-            "", // no locals query needed
+            "",
         )?;
         configs.insert(Language::Rust, rust_config);
         
-        // Python - use built-in TAGS_QUERY
         let python_config = TagsConfiguration::new(
             tree_sitter_python::LANGUAGE.into(),
             tree_sitter_python::TAGS_QUERY,
@@ -31,7 +29,6 @@ impl TagsExtractor {
         )?;
         configs.insert(Language::Python, python_config);
         
-        // Go - use built-in TAGS_QUERY
         let go_config = TagsConfiguration::new(
             tree_sitter_go::LANGUAGE.into(),
             tree_sitter_go::TAGS_QUERY,
@@ -39,23 +36,30 @@ impl TagsExtractor {
         )?;
         configs.insert(Language::Go, go_config);
         
-        // JavaScript - use built-in TAGS_QUERY
         let js_config = TagsConfiguration::new(
             tree_sitter_javascript::LANGUAGE.into(),
             tree_sitter_javascript::TAGS_QUERY,
-            tree_sitter_javascript::LOCALS_QUERY,  // JS has locals query
+            tree_sitter_javascript::LOCALS_QUERY,
         )?;
         configs.insert(Language::JavaScript, js_config);
         
-        // TypeScript - use built-in TAGS_QUERY
+        let ts_query = r#"
+(function_declaration name: (identifier) @name) @definition.function
+(class_declaration name: (type_identifier) @name) @definition.class
+(interface_declaration name: (type_identifier) @name) @definition.interface
+(type_alias_declaration name: (type_identifier) @name) @definition.type
+(enum_declaration name: (identifier) @name) @definition.enum
+(module name: (identifier) @name) @definition.module
+(variable_declarator name: (identifier) @name) @definition.variable
+(method_definition name: (property_identifier) @name) @definition.method
+        "#;
         let ts_config = TagsConfiguration::new(
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-            tree_sitter_typescript::TAGS_QUERY,
-            tree_sitter_typescript::LOCALS_QUERY,  // TS has locals query
+            ts_query,
+            "", 
         )?;
         configs.insert(Language::TypeScript, ts_config);
         
-        // Java - use built-in TAGS_QUERY
         let java_config = TagsConfiguration::new(
             tree_sitter_java::LANGUAGE.into(),
             tree_sitter_java::TAGS_QUERY,
@@ -63,7 +67,6 @@ impl TagsExtractor {
         )?;
         configs.insert(Language::Java, java_config);
         
-        // C - use built-in TAGS_QUERY
         let c_config = TagsConfiguration::new(
             tree_sitter_c::LANGUAGE.into(),
             tree_sitter_c::TAGS_QUERY,
@@ -78,9 +81,6 @@ impl TagsExtractor {
             "",
         )?;
         configs.insert(Language::Cpp, cpp_config);
-        
-        // Note: C# and some other parsers may not have TAGS_QUERY constants
-        // For those, we'd need to provide custom queries or skip them
         
         Ok(Self {
             context: TagsContext::new(),
@@ -97,7 +97,6 @@ impl TagsExtractor {
         let config = self.configs.get(language)
             .ok_or_else(|| anyhow::anyhow!("No tags config for {:?}", language))?;
         
-        // Parse with tree-sitter to get full ranges
         // Parse with tree-sitter to get full ranges
         let mut parser = tree_sitter::Parser::new();
         let lang_ts = match language {
@@ -186,6 +185,19 @@ impl TagsExtractor {
                 fqn: name.clone(), // For now, use simple name; enhance FQN logic later
                 language: language.clone(),
                 doc_comment,
+                parent_scope: {
+                    // Try to find parent scope using AST
+                    let mut scope = None;
+                    if let Some(tree) = &tree {
+                        if let Some(node) = tree.root_node().descendant_for_byte_range(tag.name_range.start, tag.name_range.end) {
+                            scope = find_parent_scope(node, language, content);
+                            if let Some(_s) = &scope {
+                                // scope found
+                            }
+                        }
+                    }
+                    scope
+                },
             });
         }
         
@@ -211,6 +223,54 @@ fn byte_to_line(content: &str, byte_offset: usize) -> usize {
         return content.lines().count();
     }
     content[..byte_offset].chars().filter(|&c| c == '\n').count() + 1
+}
+
+fn find_parent_scope(node: tree_sitter::Node, lang: &Language, source: &str) -> Option<String> {
+    let mut curr = node;
+    while let Some(parent) = curr.parent() {
+        let kind = parent.kind();
+        
+        // Skip if we are looking at the name/type node of the parent itself
+        let is_self = parent.child_by_field_name("name")
+            .or_else(|| parent.child_by_field_name("type"))
+            .map_or(false, |n| n.start_byte() == node.start_byte() && n.end_byte() == node.end_byte());
+
+        if is_self {
+            curr = parent;
+            continue;
+        }
+
+        match lang {
+            Language::Rust => {
+                if kind == "impl_item" {
+                    if let Some(type_node) = parent.child_by_field_name("type") {
+                        return type_node.utf8_text(source.as_bytes()).ok().map(|s| s.to_string());
+                    }
+                } else if matches!(kind, "mod_item" | "trait_item") {
+                    if let Some(name_node) = parent.child_by_field_name("name") {
+                        return name_node.utf8_text(source.as_bytes()).ok().map(|s| s.to_string());
+                    }
+                }
+            },
+            Language::Java | Language::JavaScript | Language::TypeScript | Language::Cpp | Language::C | Language::CSharp => {
+                if matches!(kind, "class_declaration" | "interface_declaration" | "enum_declaration" | "struct_specifier" | "class_specifier") {
+                    if let Some(name_node) = parent.child_by_field_name("name") {
+                        return name_node.utf8_text(source.as_bytes()).ok().map(|s| s.to_string());
+                    }
+                }
+            },
+            Language::Python => {
+                if kind == "class_definition" {
+                    if let Some(name_node) = parent.child_by_field_name("name") {
+                        return name_node.utf8_text(source.as_bytes()).ok().map(|s| s.to_string());
+                    }
+                }
+            },
+            _ => {}
+        }
+        curr = parent;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -275,9 +335,6 @@ mod tests {
             &Language::Rust,
         ).unwrap();
         
-        // Debug: print what we actually got
-        eprintln!("Extracted symbols: {:?}", symbols.iter().map(|s| (&s.name, &s.kind)).collect::<Vec<_>>());
-        
         // Should extract trait
         // Note: The method signature inside the trait is not extracted as a separate symbol
         // which is correct - it's just a signature, not an implementation
@@ -328,13 +385,6 @@ fn my_func() {
     println!("line 2");
 }
 "#;
-        // Lines:
-        // 1: empty
-        // 2: fn my_func() {
-        // 3:     println!("line 1");
-        // 4:     println!("line 2");
-        // 5: }
-        
         let mut extractor = TagsExtractor::new().unwrap();
         let symbols = extractor.extract_symbols(
             code,
@@ -345,5 +395,23 @@ fn my_func() {
         let sym = symbols.iter().find(|s| s.name == "my_func").unwrap();
         assert_eq!(sym.start_line, 2, "Start line should be 2");
         assert_eq!(sym.end_line, 5, "End line should be 5");
+    }
+
+    #[test]
+    fn test_ts_extraction() {
+        let code = r#"
+            export function hello() {
+                console.log("Hello");
+            }
+        "#;
+        
+        let mut extractor = TagsExtractor::new().unwrap();
+        let symbols = extractor.extract_symbols(
+            code,
+            Path::new("test.ts"),
+            &Language::TypeScript,
+        ).unwrap();
+        
+        assert!(symbols.iter().any(|s| s.name == "hello"), "Should extract hello function");
     }
 }

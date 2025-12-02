@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use emry_config::Config;
-use emry_core::chunking::Chunker;
+use emry_core::chunking::{Chunker, GenericChunker};
 use emry_core::models::Language;
 use emry_core::relations::{extract_calls_imports, RelationRef};
 use emry_core::symbols::extract_symbols;
@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, warn};
+use futures::stream::{self, StreamExt};
 
 /// Input for indexing a single file.
 #[derive(Clone)]
@@ -35,30 +36,34 @@ pub struct PreparedFile {
     pub chunks: Vec<emry_core::models::Chunk>,
     pub symbols: Vec<emry_core::models::Symbol>,
     pub chunk_symbol_edges: Vec<(String, String)>, // chunk -> symbol
-    pub call_edges: Vec<(String, String)>,         // caller -> callee name
-    pub import_edges: Vec<(String, String)>,       // file or chunk -> import name
+    pub call_edges: Vec<(String, RelationRef)>,    // caller -> full call info
+    pub import_edges: Vec<(String, RelationRef)>,  // file or chunk -> full import info
 }
 
-pub async fn prepare_files_async(
+pub async fn analyze_source_files(
     inputs: Vec<FileInput>,
     config: &Config,
-    embedder: Option<Arc<dyn Embedder + Send + Sync>>,
     concurrency: usize,
 ) -> Vec<PreparedFile> {
-    use futures::stream::{self, StreamExt};
     let cfg = config.clone();
     let sem = Arc::new(tokio::sync::Semaphore::new(concurrency.max(1)));
 
-    let mut prepared: Vec<PreparedFile> = stream::iter(inputs.into_iter().map(|input| {
+    stream::iter(inputs.into_iter().map(|input| {
         let cfg = cfg.clone();
         let sem = sem.clone();
+        let input_clone = input.clone();
         async move {
             let permit = sem.acquire().await.expect("semaphore closed");
             // Note: We pass None for embedder here because we want to batch embed globally later
-            let res = tokio::task::spawn_blocking(move || prepare_file(&input, &cfg, None))
+            let res = tokio::task::spawn_blocking(move || prepare_file(&input_clone, &cfg, None))
                 .await
-                .ok()
-                .and_then(|r| r.ok());
+                .context("Task join error")
+                .and_then(|r| r.context(format!("Failed to prepare file {}", input.path.display())))
+                .map_err(|e| {
+                    error!("Indexing failed: {:#}", e);
+                    e
+                })
+                .ok();
             drop(permit);
             res
         }
@@ -66,48 +71,45 @@ pub async fn prepare_files_async(
     .buffer_unordered(concurrency.max(1))
     .filter_map(|r| async move { r })
     .collect()
-    .await;
+    .await
+}
 
-    // Global batch embedding
-    if let Some(embedder) = embedder {
-        // Collect all chunks that need embedding
-        let mut all_chunks_refs: Vec<&mut emry_core::models::Chunk> = Vec::new();
-        for file in &mut prepared {
-            for chunk in &mut file.chunks {
-                all_chunks_refs.push(chunk);
-            }
-        }
-
-        if !all_chunks_refs.is_empty() {
-            let total_chunks = all_chunks_refs.len();
-            println!("Embedding {} chunks in batches...", total_chunks);
-
-            let _texts: Vec<String> = all_chunks_refs.iter().map(|c| c.content.clone()).collect();
-            // Embed in batches of 512 to avoid hitting API limits too hard
-            for (i, chunk_batch) in all_chunks_refs.chunks_mut(512).enumerate() {
-                let batch_texts: Vec<String> =
-                    chunk_batch.iter().map(|c| c.content.clone()).collect();
-                if let Ok(embeddings) = embedder.embed_batch(&batch_texts).await {
-                    if embeddings.len() == chunk_batch.len() {
-                        for (chunk, emb) in chunk_batch.iter_mut().zip(embeddings) {
-                            chunk.embedding = Some(emb);
-                        }
-                    } else {
-                        warn!(
-                            "Embedding count mismatch in global batch {} (got {}, expected {})",
-                            i,
-                            embeddings.len(),
-                            chunk_batch.len()
-                        );
-                    }
-                } else {
-                    error!("Failed to embed global batch {}", i);
-                }
-            }
+pub async fn generate_embeddings(
+    prepared_files: &mut [PreparedFile],
+    embedder: Arc<dyn Embedder + Send + Sync>,
+) {
+    // Collect all chunks that need embedding
+    let mut all_chunks_refs: Vec<&mut emry_core::models::Chunk> = Vec::new();
+    for file in prepared_files.iter_mut() {
+        for chunk in &mut file.chunks {
+            all_chunks_refs.push(chunk);
         }
     }
 
-    prepared
+    if !all_chunks_refs.is_empty() {
+        let _texts: Vec<String> = all_chunks_refs.iter().map(|c| c.content.clone()).collect();
+        // Embed in batches of 512 to avoid hitting API limits too hard
+        for (i, chunk_batch) in all_chunks_refs.chunks_mut(512).enumerate() {
+            let batch_texts: Vec<String> =
+                chunk_batch.iter().map(|c| c.content.clone()).collect();
+            if let Ok(embeddings) = embedder.embed_batch(&batch_texts).await {
+                if embeddings.len() == chunk_batch.len() {
+                    for (chunk, emb) in chunk_batch.iter_mut().zip(embeddings) {
+                        chunk.embedding = Some(emb);
+                    }
+                } else {
+                    warn!(
+                        "Embedding count mismatch in global batch {} (got {}, expected {})",
+                        i,
+                        embeddings.len(),
+                        chunk_batch.len()
+                    );
+                }
+            } else {
+                error!("Failed to embed global batch {}", i);
+            }
+        }
+    }
 }
 
 pub fn compute_hash(content: &str) -> String {
@@ -121,7 +123,6 @@ fn prepare_file(
     config: &Config,
     _embedder: Option<Arc<dyn Embedder + Send + Sync>>,
 ) -> Result<PreparedFile> {
-    use emry_core::chunking::GenericChunker;
     let chunker = GenericChunker::with_config(input.language.clone(), config.chunking.clone());
     let mut chunks = chunker.chunk(&input.content, &input.path)?;
     for chunk in chunks.iter_mut() {
@@ -130,42 +131,36 @@ fn prepare_file(
         }
     }
 
-    // Embedding is now handled globally in prepare_files_async
-    // if let Some(embedder) = embedder { ... } removed
+
 
     let mut symbols: Vec<emry_core::models::Symbol> = Vec::new();
     let mut chunk_symbol_edges: Vec<(String, String)> = Vec::new();
-    if let Ok(syms) = extract_symbols(&input.content, &input.path, &input.language) {
-        for sym in syms {
-            if let Some(chunk_id) = find_covering_chunk_id(&chunks, sym.start_line, sym.end_line) {
-                chunk_symbol_edges.push((chunk_id.clone(), sym.id.clone()));
+    match extract_symbols(&input.content, &input.path, &input.language) {
+        Ok(syms) => {
+
+            for sym in syms {
+                if let Some(chunk_id) = find_covering_chunk_id(&chunks, sym.start_line, sym.end_line) {
+                    chunk_symbol_edges.push((chunk_id.clone(), sym.id.clone()));
+                } else {
+                    for chunk in &chunks {
+                        if sym.start_line <= chunk.end_line && sym.end_line >= chunk.start_line {
+                            chunk_symbol_edges.push((chunk.id.clone(), sym.id.clone()));
+                        }
+                    }
+                }
+                symbols.push(sym);
             }
-            symbols.push(sym);
+        }
+        Err(e) => {
+            eprintln!("Failed to extract symbols for {}: {}", input.path.display(), e);
         }
     }
 
-    // Stack-graphs call extraction is now handled globally in the pipeline
-    // using StackGraphManager. We no longer extract per-file here.
-    let mut call_edges: Vec<(String, String)> = Vec::new();
+    let mut call_edges: Vec<(String, RelationRef)> = Vec::new();
 
-    let (mut calls, mut imports) = extract_calls_imports(&input.language, &input.content);
-    // println!("DEBUG: File {} has {} calls: {:?}", input.path.display(), calls.len(), calls);
-    
-    if calls.is_empty() && imports.is_empty() {
-        let (fallback_calls, fallback_imports) = extract_calls_and_imports(&input.content);
-        calls.extend(
-            fallback_calls
-                .into_iter()
-                .map(|c| RelationRef { name: c, line: 0 }),
-        );
-        imports.extend(
-            fallback_imports
-                .into_iter()
-                .map(|i| RelationRef { name: i, line: 0 }),
-        );
-    }
+    let (calls, imports) = extract_calls_imports(&input.language, &input.content)?;
 
-    let mut import_edges: Vec<(String, String)> = Vec::new();
+    let mut import_edges: Vec<(String, RelationRef)> = Vec::new();
 
     for c in calls {
         // Find the smallest symbol containing this call
@@ -175,13 +170,12 @@ fn prepare_file(
             .min_by_key(|s| s.end_line - s.start_line)
             .map(|s| s.id.clone())
             .or_else(|| {
-                // Fallback to chunk if no symbol covers it
                 find_covering_chunk_id(&chunks, c.line, c.line)
             })
             .unwrap_or_else(|| input.file_node_id.clone());
             
-        // println!("DEBUG: Call {} on line {} attributed to {}", c.name, c.line, caller_node);
-        call_edges.push((caller_node, c.name));
+
+        call_edges.push((caller_node, c));
     }
     for imp in imports {
         // Find the smallest symbol containing this import (usually top-level, but could be inside mod/fn)
@@ -195,7 +189,7 @@ fn prepare_file(
             })
             .unwrap_or_else(|| input.file_node_id.clone());
             
-        import_edges.push((caller_node, imp.name));
+        import_edges.push((caller_node, imp));
     }
 
     Ok(PreparedFile {
@@ -227,56 +221,4 @@ fn find_covering_chunk_id(
     None
 }
 
-/// Fallback regex-based extractor for calls/imports when tree-sitter gives nothing.
-fn extract_calls_and_imports(content: &str) -> (Vec<String>, Vec<String>) {
-    let mut calls = Vec::new();
-    let mut imports = Vec::new();
-    let call_re = regex::Regex::new(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
-    let rust_import = regex::Regex::new(r"^\s*use\s+([A-Za-z0-9_:]+)").unwrap();
-    let py_import = regex::Regex::new(
-        r"^\s*(?:from\s+([A-Za-z0-9_\.]+)\s+import\s+([A-Za-z0-9_]+)|import\s+([A-Za-z0-9_\.]+))",
-    )
-    .unwrap();
-    let go_import = regex::Regex::new(r#"^\s*import\s+"([^"]+)""#).unwrap();
 
-    for line in content.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("//") || trimmed.starts_with("#") {
-            continue;
-        }
-
-        if let Some(cap) = rust_import.captures(line) {
-            if let Some(name) = cap.get(1) {
-                if let Some(last) = name.as_str().rsplit("::").next() {
-                    imports.push(last.to_string());
-                }
-            }
-        }
-        if let Some(cap) = py_import.captures(line) {
-            if let Some(n) = cap.get(2) {
-                imports.push(n.as_str().to_string());
-            } else if let Some(n) = cap.get(3) {
-                if let Some(last) = n.as_str().rsplit('.').next() {
-                    imports.push(last.to_string());
-                }
-            } else if let Some(n) = cap.get(1) {
-                imports.push(n.as_str().to_string());
-            }
-        }
-        if let Some(cap) = go_import.captures(line) {
-            if let Some(n) = cap.get(1) {
-                if let Some(last) = n.as_str().rsplit('/').last() {
-                    imports.push(last.to_string());
-                }
-            }
-        }
-
-        for cap in call_re.captures_iter(line) {
-            if let Some(name) = cap.get(1) {
-                calls.push(name.as_str().to_string());
-            }
-        }
-    }
-
-    (calls, imports)
-}

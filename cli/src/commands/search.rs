@@ -9,6 +9,11 @@ use std::path::PathBuf;
 
 use super::regex_utils;
 use super::utils::{build_single_globset, path_matches};
+use emry_agent::ops::rewriter::QueryRewriter;
+use emry_agent::llm::OpenAIProvider;
+
+use super::ui;
+use console::Style;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum CliSearchMode {
@@ -27,35 +32,27 @@ pub async fn handle_search(
     symbol: bool,
     regex: bool,
     no_ignore: bool,
+    smart: bool,
 ) -> Result<()> {
-    println!("Searching for: {}", query);
+    ui::print_header(&format!("Searching for: {}{}", query, if smart { " (Smart)" } else { "" }));
+
     let ctx = agent_context::RepoContext::from_env(config_path).await?;
     let root = ctx.root.clone();
     let config = ctx.config.clone();
-    let _embedder = ctx.embedder.clone();
+
     let embedder = ctx.embedder.clone();
     
     // Initialize SurrealStore & SearchService
-    // Initialize SurrealStore & SearchService
-    // Reuse store from context if available, or error out
     let surreal_store = ctx.surreal_store.clone()
         .ok_or_else(|| anyhow::anyhow!("SurrealStore not initialized in context"))?;
     let search_service = SearchService::new(surreal_store.clone(), embedder.clone());
     
-    // Legacy Manager (kept for now if needed)
-    // let manager = Arc::new(IndexManager::new(...));
-
-    // Symbol search short-circuit
     if symbol {
         let matcher = build_single_globset(path.as_deref());
         let lang_filter = lang.as_deref().map(Language::from_name);
         let mut matches = Vec::new();
         if let Ok(nodes) = surreal_store.find_nodes_by_label(&query, None).await {
             for node in nodes {
-                // node.label is already filtered by CONTAINS query in find_nodes_by_label
-                // but we can keep the check if we want exact match or if the query was broad
-                // find_nodes_by_label does "name CONTAINS $label"
-                
                 let file_path = PathBuf::from(&node.file_path);
                 if let Some(lf) = lang_filter.as_ref() {
                     if let Some(ext) = file_path.extension().and_then(|s| s.to_str()) {
@@ -70,14 +67,24 @@ pub async fn handle_search(
                 matches.push((node.label.clone(), file_path, node.id.clone()));
             }
         }
-        println!("Found {} symbol matches:", matches.len());
-        for (i, (name, file_path, id)) in matches.iter().enumerate() {
-            println!("{}: {} ({}) - ID: {}", i + 1, name, file_path.display(), id);
+        
+        if matches.is_empty() {
+             println!("No symbol matches found.");
+        } else {
+            println!("Found {} symbol matches:", matches.len());
+            for (i, (name, file_path, id)) in matches.iter().enumerate() {
+                 println!(
+                    "{} {} ({})",
+                    Style::new().dim().apply_to(format!("{}.", i + 1)),
+                    Style::new().bold().cyan().apply_to(name),
+                    Style::new().dim().apply_to(file_path.display())
+                );
+                println!("   {}", Style::new().dim().apply_to(format!("ID: {}", id)));
+            }
         }
         return Ok(())
     }
 
-    // Regex short-circuit
     if regex {
         let matcher = build_single_globset(path.as_deref());
         let lang_filter = lang.as_deref().map(Language::from_name);
@@ -98,27 +105,107 @@ pub async fn handle_search(
                     continue;
                 }
                 let rel = p.strip_prefix(&root).unwrap_or(&p);
-                println!("{}:{}: {}", rel.display(), line, content);
+                ui::print_search_match(0, &rel.to_string_lossy(), line, line, &content);
             }
         }
         return Ok(())
     }
 
-    // New Search Logic
-    let results = search_service.search(&query, limit).await?;
-    
-    // Display results
-    for (i, chunk) in results.iter().enumerate() {
-        println!(
-            "\n#{} {}:{}-{}",
-            i + 1,
-            chunk.file.id.to_string(), // Thing ID
-            chunk.start_line,
-            chunk.end_line
-        );
-        // print_snippet requires emry_core::models::Chunk, we have ChunkRecord.
-        // We can just print content directly for now.
-        println!("{}", chunk.content.trim());
+    if smart {
+        let keywords = if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+            let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+            if let Ok(llm) = OpenAIProvider::new(model, api_key, 60) {
+                let rewriter = QueryRewriter::new(llm);
+                
+                match rewriter.rewrite(&query).await {
+                    Ok(expanded) => {
+                        ui::print_panel("Query", &format!("Original: {}\nKeywords: {:?}\nIntent: {}", query, expanded.keywords, expanded.intent), Style::new().green(), None);
+                        Some(expanded.keywords)
+                    },
+                    Err(_) => None
+                }
+            } else {
+                None
+            }
+        } else {
+            ui::print_panel("Warning", "OPENAI_API_KEY not set. Skipping query expansion.", Style::new().yellow(), None);
+            None
+        };
+
+        let context_graph = search_service.search_with_context(&query, limit, keywords.as_deref()).await?;
+        
+            let grouped = context_graph.group_by_symbol();
+            
+            if grouped.groups.is_empty() && grouped.unassigned.is_empty() {
+                println!("No smart matches found.");
+            } else {
+                println!("Found {} symbol groups and {} unassigned matches:", grouped.groups.len(), grouped.unassigned.len());
+                
+                let mut match_index = 0;
+
+                // Print Symbol Groups
+                for group in grouped.groups {
+                    // Calculate range and content first
+                    let start_line = group.anchors.iter().map(|c| c.chunk.start_line).min().unwrap_or(0);
+                    let end_line = group.anchors.iter().map(|c| c.chunk.end_line).max().unwrap_or(0);
+                    let content = emry_core::models::ScoredChunk::concatenate_chunks(&group.anchors);
+
+                    match_index += 1;
+                    println!("{} {} {} {}", 
+                        Style::new().bold().blue().apply_to(format!("#{}", match_index)),
+                        Style::new().dim().apply_to("Symbol:"),
+                        Style::new().bold().cyan().apply_to(&group.symbol.name),
+                        Style::new().dim().apply_to(format!("({}:{}-{})", group.symbol.file_path.display(), start_line, end_line))
+                    );
+                    
+                    if !group.calls.is_empty() {
+                        print!("  {} Calls: ", Style::new().dim().apply_to("↳"));
+                        for (j, call) in group.calls.iter().enumerate() {
+                            if j > 0 { print!(", "); }
+                            print!("{}", Style::new().yellow().apply_to(&call.name));
+                        }
+                        println!();
+                    }
+
+                    println!("{}", Style::new().dim().apply_to(content.trim()));
+                    println!();
+                }
+
+                // Print Unassigned
+                if !grouped.unassigned.is_empty() {
+                    println!("Other Matches:");
+                    for anchor in grouped.unassigned {
+                        match_index += 1;
+                        ui::print_search_match(
+                            match_index,
+                            &anchor.chunk.file_path.display().to_string(),
+                            anchor.chunk.start_line,
+                            anchor.chunk.end_line,
+                            &anchor.chunk.content
+                        );
+                    }
+                }
+            }
+    } else {
+        let results = search_service.search(&query, limit, None).await?;
+        
+        if results.is_empty() {
+            println!("No semantic matches found.");
+        } else {
+            println!("Found {} semantic matches:", results.len());
+            // Display results
+            for (i, chunk) in results.iter().enumerate() {
+                let file_id = chunk.file.id.to_string();
+                let path = file_id.strip_prefix("file:").unwrap_or(&file_id);
+                ui::print_search_match(
+                    i + 1,
+                    path,
+                    chunk.start_line,
+                    chunk.end_line,
+                    &chunk.content
+                );
+            }
+        }
     }
 
     Ok(())

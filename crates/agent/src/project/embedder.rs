@@ -38,6 +38,18 @@ pub async fn select_embedder(config: &EmbeddingConfig) -> Result<Arc<dyn Embedde
     }
 }
 
+/// Determine the embedding dimension based on the configuration and environment.
+pub fn get_embedding_dimension(config: &EmbeddingConfig) -> usize {
+    if let Ok(_) = env::var("OPENAI_API_KEY") {
+        if config.backend == EmbeddingBackend::External {
+             return 1536; // OpenAI text-embedding-3-small/large
+        }
+    }
+    
+    // Default to 768 for local/ollama (nomic-embed-text)
+    768
+}
+
 struct ExternalEmbedder {
     model: String,
     api_key: String,
