@@ -74,7 +74,6 @@ impl TagsExtractor {
         )?;
         configs.insert(Language::C, c_config);
         
-        // C++ - use built-in TAGS_QUERY
         let cpp_config = TagsConfiguration::new(
             tree_sitter_cpp::LANGUAGE.into(),
             tree_sitter_cpp::TAGS_QUERY,
@@ -97,7 +96,6 @@ impl TagsExtractor {
         let config = self.configs.get(language)
             .ok_or_else(|| anyhow::anyhow!("No tags config for {:?}", language))?;
         
-        // Parse with tree-sitter to get full ranges
         let mut parser = tree_sitter::Parser::new();
         let lang_ts = match language {
             Language::Rust => Some(tree_sitter_rust::LANGUAGE.into()),
@@ -133,30 +131,23 @@ impl TagsExtractor {
         for tag in tags {
             let tag = tag?;
             
-            // In tree-sitter-tags, we only have is_definition and syntax_type_id
-            // Skip references (only keep definitions)
             if !tag.is_definition {
                 continue;
             }
             
-            // Get the actual kind string using the config's syntax_type_name method
-            // The syntax_type_id is dynamically assigned based on the captures in the query file
             let kind = config.syntax_type_name(tag.syntax_type_id).to_string();
             
-            // Extract name from content
             let name = std::str::from_utf8(
                 &content.as_bytes()[tag.name_range.start..tag.name_range.end]
             )?
             .to_string();
             
-            // Default to tag range (byte offsets converted to lines)
             let mut start_byte = tag.line_range.start;
             let mut end_byte = tag.line_range.end;
+            let mut parent_scope = None;
             
-            // Try to refine range using AST
             if let Some(tree) = &tree {
                 if let Some(node) = tree.root_node().descendant_for_byte_range(tag.name_range.start, tag.name_range.end) {
-                    // Walk up to find definition
                     let mut curr = node;
                     while let Some(parent) = curr.parent() {
                         if is_definition_node(parent.kind(), language) {
@@ -166,15 +157,14 @@ impl TagsExtractor {
                         }
                         curr = parent;
                     }
+                    
+                    parent_scope = find_parent_scope(node, language, content);
                 }
             }
             
             let start_line = byte_to_line(content, start_byte);
             let end_line = byte_to_line(content, end_byte);
-            
-            // In 0.23, docs is Option<String> not a Range
-            let doc_comment = tag.docs;
-            
+
             symbols.push(Symbol {
                 id: format!("{}:{}-{}", path.display(), start_line, end_line),
                 name: name.clone(),
@@ -182,26 +172,72 @@ impl TagsExtractor {
                 file_path: PathBuf::from(path),
                 start_line,
                 end_line,
-                fqn: name.clone(), // For now, use simple name; enhance FQN logic later
-                language: language.clone(),
-                doc_comment,
-                parent_scope: {
-                    // Try to find parent scope using AST
-                    let mut scope = None;
-                    if let Some(tree) = &tree {
-                        if let Some(node) = tree.root_node().descendant_for_byte_range(tag.name_range.start, tag.name_range.end) {
-                            scope = find_parent_scope(node, language, content);
-                            if let Some(_s) = &scope {
-                                // scope found
-                            }
-                        }
-                    }
-                    scope
-                },
+                fqn: name.clone(), 
+                language: *language,
+                doc_comment: tag.docs,
+                parent_scope,
             });
         }
         
         Ok(symbols)
+    }
+    pub fn generate_outline(
+        &mut self,
+        code: &str,
+        path: &Path,
+        language: &Language,
+    ) -> Result<String> {
+        let symbols = self.extract_symbols(code, path, language)?;
+        
+        let mut sorted_symbols = symbols;
+        sorted_symbols.sort_by_key(|s| s.start_line);
+        
+        let mut outline = String::new();
+        
+        for sym in sorted_symbols {
+            let indent = if sym.parent_scope.is_some() { "    " } else { "" };
+            let kind_marker = match sym.kind.as_str() {
+                "function" | "method" => "fn",
+                "class" | "struct" => "class",
+                "interface" | "trait" => "interface",
+                "module" => "mod",
+                k => k,
+            };
+            
+            let line = format!("{}{}: {} (L{}-L{})\n", indent, kind_marker, sym.name, sym.start_line, sym.end_line);
+            outline.push_str(&line);
+        }
+        
+        Ok(outline)
+    }
+
+    pub fn extract_code_item(
+        &mut self,
+        code: &str,
+        path: &Path,
+        language: &Language,
+        node_path: &str,
+    ) -> Result<Option<String>> {
+        let symbols = self.extract_symbols(code, path, language)?;
+        
+        for sym in symbols {
+            let match_found = if let Some(parent) = &sym.parent_scope {
+                let full_name = format!("{}.{}", parent, sym.name);
+                full_name == node_path || sym.name == node_path 
+            } else {
+                sym.name == node_path
+            };
+            
+            if match_found {
+                let lines: Vec<&str> = code.lines().collect();
+                if sym.start_line > 0 && sym.end_line <= lines.len() {
+                    let snippet = lines[sym.start_line - 1..sym.end_line].join("\n");
+                    return Ok(Some(snippet));
+                }
+            }
+        }
+        
+        Ok(None)
     }
 }
 
@@ -218,7 +254,6 @@ fn is_definition_node(kind: &str, lang: &Language) -> bool {
 }
 
 fn byte_to_line(content: &str, byte_offset: usize) -> usize {
-    // 1-indexed line number
     if byte_offset >= content.len() {
         return content.lines().count();
     }
@@ -230,7 +265,6 @@ fn find_parent_scope(node: tree_sitter::Node, lang: &Language, source: &str) -> 
     while let Some(parent) = curr.parent() {
         let kind = parent.kind();
         
-        // Skip if we are looking at the name/type node of the parent itself
         let is_self = parent.child_by_field_name("name")
             .or_else(|| parent.child_by_field_name("type"))
             .map_or(false, |n| n.start_byte() == node.start_byte() && n.end_byte() == node.end_byte());
@@ -335,9 +369,6 @@ mod tests {
             &Language::Rust,
         ).unwrap();
         
-        // Should extract trait
-        // Note: The method signature inside the trait is not extracted as a separate symbol
-        // which is correct - it's just a signature, not an implementation
         assert!(symbols.iter().any(|s| s.name == "Embedder"), "Should extract Embedder trait");
     }
     
@@ -413,5 +444,52 @@ fn my_func() {
         ).unwrap();
         
         assert!(symbols.iter().any(|s| s.name == "hello"), "Should extract hello function");
+    }
+
+    #[test]
+    fn test_generate_outline() {
+        let code = r#"
+            class MyClass {
+                myMethod() {
+                    console.log("hello");
+                }
+            }
+            function globalFunc() {}
+        "#;
+        
+        let mut extractor = TagsExtractor::new().unwrap();
+        let outline = extractor.generate_outline(
+            code, 
+            Path::new("test.js"), 
+            &Language::JavaScript
+        ).unwrap();
+        
+        assert!(outline.contains("class: MyClass"));
+        assert!(outline.contains("fn: myMethod"));
+        assert!(outline.contains("fn: globalFunc"));
+    }
+
+    #[test]
+    fn test_extract_code_item() {
+        let code = r#"
+            class MyClass {
+                myMethod() {
+                    console.log("hello");
+                }
+            }
+        "#;
+        
+        let mut extractor = TagsExtractor::new().unwrap();
+        let item = extractor.extract_code_item(
+            code,
+            Path::new("test.js"),
+            &Language::JavaScript,
+            "MyClass.myMethod"
+        ).unwrap();
+        
+        assert!(item.is_some());
+        let content = item.unwrap();
+        assert!(content.contains("myMethod()"));
+        assert!(content.contains("console.log"));
     }
 }

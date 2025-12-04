@@ -30,19 +30,17 @@ impl Cortex {
         F: FnMut(CortexEvent) + Send,
     {
         self.ctx.history.clear();
-        let max_steps = 10;
+        let max_steps = self.ctx.config.max_steps;
         
         let mut messages = Vec::new();
         
-        // System Message
         let mut system_prompt = crate::cortex::prompts::SYSTEM_PROMPT.to_string();
         
-        // Add workspace context
         system_prompt.push_str(&format!(
             "\n\n# WORKSPACE CONTEXT\n\
              Workspace Root: {}\n\
              All file operations must use paths within this workspace. \
-             Use '.' to refer to the workspace root or relative paths like 'src/module'.\n",
+             Use '.' to refer to the workspace root.\n",
             self.ctx.repo_context.root.display()
         ));
         
@@ -55,7 +53,6 @@ impl Cortex {
             content: system_prompt,
         });
         
-        // Initial User Message (Query + Memory)
         let mut user_content = format!("## Current Task\nQuery: {}\n\n", query);
         if !self.ctx.memory.is_empty() {
             user_content.push_str("## Memory\n");
@@ -129,7 +126,6 @@ impl Cortex {
 
             on_event(CortexEvent::ToolResult { name: tool_name.clone(), result: tool_result.clone() });
 
-            // Record User Message (Observation)
             messages.push(crate::llm::Message {
                 role: "user".to_string(),
                 content: format!("Observation: {}", tool_result),

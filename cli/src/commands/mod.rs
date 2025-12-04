@@ -1,5 +1,7 @@
 pub mod ask;
 
+pub mod cat;
+pub mod explore;
 pub mod graph;
 pub mod index;
 pub mod inspect;
@@ -8,14 +10,27 @@ pub mod search;
 pub mod status;
 pub mod ui;
 pub mod utils;
+pub mod architecture;
+pub mod impact;
+pub mod focus;
+pub mod map;
+pub mod debug;
+pub mod explain;
 
 pub use ask::handle_ask;
-
+pub use cat::handle_cat;
+pub use explore::handle_explore;
 pub use graph::{handle_graph, GraphArgs};
 pub use index::handle_index;
 pub use inspect::{handle_inspect, InspectArgs};
 pub use search::{handle_search, CliSearchMode};
 pub use status::handle_status;
+pub use architecture::handle_architecture;
+pub use impact::handle_impact;
+pub use focus::handle_focus;
+pub use map::handle_codebase_map;
+pub use debug::handle_debug;
+pub use explain::handle_explain;
 
 
 use clap::{Parser, Subcommand};
@@ -91,5 +106,64 @@ pub enum Commands {
     Status,
     /// Inspect a node by ID
     Inspect(InspectArgs),
-
+    /// Batch read files
+    Cat {
+        /// Files to read
+        #[arg(required = true)]
+        files: Vec<String>,
+    },
+    /// Explore a module/directory
+    Explore {
+        /// Path to explore
+        path: String,
+        /// Depth of exploration
+        #[arg(long, default_value_t = 1)]
+        depth: usize,
+    },
+    /// Analyze codebase architecture
+    Architecture {
+        /// Analysis mode: 'fast' or 'deep'
+        #[arg(long, default_value = "fast")]
+        mode: String,
+        /// Show verbose output (progress steps)
+        #[arg(long, default_value_t = false)]
+        verbose: bool,
+    },
+    /// Analyze impact of changes
+    Impact {
+        /// File path
+        file: PathBuf,
+        /// Start line
+        start: usize,
+        /// End line
+        end: usize,
+        /// Show verbose output
+        #[arg(long, default_value_t = false)]
+        verbose: bool,
+    },
+    /// Smart Focus (Auto-Context)
+    Focus {
+        /// Topic to focus on
+        topic: String,
+        /// Show verbose output
+        #[arg(long, default_value_t = false)]
+        verbose: bool,
+    },
+    /// Generate a high-level map of the codebase
+    Map {
+        /// Depth of traversal
+        #[arg(long, default_value_t = 2)]
+        depth: usize,
+        /// Show verbose output
+        #[arg(long, default_value_t = false)]
+        verbose: bool,
+    },
+    /// Debug database stats
+    Debug,
+    /// Explain the project functionality and capabilities
+    Explain {
+        /// Show verbose output
+        #[arg(long, default_value_t = false)]
+        verbose: bool,
+    },
 }

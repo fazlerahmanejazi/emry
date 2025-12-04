@@ -5,8 +5,8 @@ use anyhow::{Result, anyhow};
 #[derive(Debug, Clone)]
 pub struct RelationRef {
     pub name: String,
-    pub alias: Option<String>, // For "import x as y", name="x", alias="y"
-    pub context: Option<String>, // For "x.method()", context="x"
+    pub alias: Option<String>,
+    pub context: Option<String>,
     pub line: usize,
 }
 
@@ -62,7 +62,6 @@ fn extract_js_ts_calls_imports(
             "call_expression" => {
                 if let Some(function) = node.child_by_field_name("function") {
                     if let Ok(text) = function.utf8_text(content.as_bytes()) {
-                         // Check for member expression: obj.method()
                         if function.kind() == "member_expression" {
                              if let (Some(obj), Some(prop)) = (
                                  function.child_by_field_name("object"),
@@ -92,7 +91,6 @@ fn extract_js_ts_calls_imports(
                 }
             }
             "import_statement" => {
-                // import { A as B } from 'mod';
                 if let Some(source) = node.child_by_field_name("source") {
                     if let Ok(module_name_raw) = source.utf8_text(content.as_bytes()) {
                         let module_name = module_name_raw.trim_matches(['\"', '\'']);
@@ -107,8 +105,6 @@ fn extract_js_ts_calls_imports(
                         }
                         
                         if let Some(clause) = clause_node {
-                            // import_clause
-                            // Can be named_imports or just identifier (default import)
                             let mut cursor = clause.walk();
                             for child in clause.children(&mut cursor) {
                                 if child.kind() == "named_imports" {
@@ -131,11 +127,10 @@ fn extract_js_ts_calls_imports(
                                         }
                                     }
                                 } else if child.kind() == "identifier" {
-                                    // Default import: import A from 'mod'
                                     if let Ok(name) = child.utf8_text(content.as_bytes()) {
                                         imports.push(RelationRef {
-                                            name: module_name.to_string(), // The module itself is imported
-                                            alias: Some(name.to_string()), // As this local name
+                                            name: module_name.to_string(),
+                                            alias: Some(name.to_string()),
                                             context: None,
                                             line: node.start_position().row + 1,
                                         });
@@ -177,14 +172,6 @@ fn extract_java_calls_imports(content: &str) -> Result<(Vec<RelationRef>, Vec<Re
                 }
             }
             "import_declaration" => {
-                // Java import structure:
-                // import_declaration
-                //   import (keyword)
-                //   [static] (optional)
-                //   scoped_identifier (the import path)
-                //   ; (semicolon)
-                
-                // Find the scoped_identifier child
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
                     if child.kind() == "scoped_identifier" {
@@ -198,7 +185,7 @@ fn extract_java_calls_imports(content: &str) -> Result<(Vec<RelationRef>, Vec<Re
                                 });
                             }
                         }
-                        break; // Only take the first scoped_identifier
+                        break;
                     }
                 }
             }
@@ -316,7 +303,6 @@ fn extract_python_calls_imports(content: &str) -> Result<(Vec<RelationRef>, Vec<
             "call" => {
                 if let Some(func) = node.child_by_field_name("function") {
                     if let Ok(text) = func.utf8_text(content.as_bytes()) {
-                        // Check for attribute access: obj.method()
                         if func.kind() == "attribute" {
                             if let Some(obj) = func.child_by_field_name("object") {
                                 if let Some(attr) = func.child_by_field_name("attribute") {
@@ -378,12 +364,10 @@ fn extract_python_calls_imports(content: &str) -> Result<(Vec<RelationRef>, Vec<
                 }
             }
             "import_from_statement" => {
-                // from module import x as y
                 if let Some(module_node) = node.child_by_field_name("module_name") {
                     if let Ok(module_name) = module_node.utf8_text(content.as_bytes()) {
                         let mut cursor = node.walk();
                         
-                        // Let's iterate over children and look for dotted_name or aliased_import that are NOT the module_name
                         for child in node.children(&mut cursor) {
                              if child.kind() == "dotted_name" && child.id() != module_node.id() {
                                  if let Ok(name) = child.utf8_text(content.as_bytes()) {
@@ -438,14 +422,12 @@ fn extract_rust_calls_imports(content: &str) -> Result<(Vec<RelationRef>, Vec<Re
                     if let Ok(full_name) = func.utf8_text(content.as_bytes()) {
                         let mut name = full_name.to_string();
                         if !name.is_empty() {
-                            // Check for method call syntax "obj.method()"
                             let mut context = if let Some(field_expr) = func.child_by_field_name("value") {
                                 field_expr.utf8_text(content.as_bytes()).ok().map(|s| s.to_string())
                             } else {
                                 None
                             };
 
-                            // If no context found (not a method call), check if it's a scoped call "mod::func"
                             if context.is_none() && name.contains("::") {
                                 if let Some(idx) = name.rfind("::") {
                                     context = Some(name[..idx].to_string());
@@ -467,8 +449,6 @@ fn extract_rust_calls_imports(content: &str) -> Result<(Vec<RelationRef>, Vec<Re
                 if let Ok(name) = node.utf8_text(content.as_bytes()) {
                     let cleaned = name.trim().trim_start_matches("use").trim_end_matches(';');
                     let full_path = cleaned.trim().to_string();
-                    
-                    // Just basic path extraction for now
                     
                     if !full_path.is_empty() {
                         imports.push(RelationRef {
@@ -534,12 +514,10 @@ fn extract_go_calls_imports(content: &str) -> Result<(Vec<RelationRef>, Vec<Rela
 mod tests {
     use super::*;
 
-    // Helper function to find a call by name
     fn find_call<'a>(calls: &'a [RelationRef], name: &str) -> Option<&'a RelationRef> {
         calls.iter().find(|c| c.name == name)
     }
 
-    // Helper function to find an import by name
     fn find_import<'a>(imports: &'a [RelationRef], name: &str) -> Option<&'a RelationRef> {
         imports.iter().find(|i| i.name == name)
     }
@@ -556,20 +534,16 @@ fn my_func() {
 "#;
         let (calls, _) = extract_calls_imports(&Language::Rust, code).unwrap();
         
-        // Verify all calls are found (full names as extracted)
         assert!(find_call(&calls, "foo").is_some(), "Simple call not found");
         assert!(find_call(&calls, "obj.bar").is_some(), "Method call not found");
         assert!(find_call(&calls, "obj.nested.baz").is_some(), "Nested call not found");
         
-        // Static call is now split into context and name
         let static_call = find_call(&calls, "static_method").expect("Static call not found");
         assert_eq!(static_call.context, Some("Self".to_string()), "Context not captured for Self::static_method");
         
-        // Verify line numbers (1-indexed)
         let foo_call = find_call(&calls, "foo").unwrap();
         assert_eq!(foo_call.line, 3, "Line number mismatch for foo()");
         
-        // Verify context for method calls
         let bar_call = find_call(&calls, "obj.bar").unwrap();
         assert_eq!(bar_call.context, Some("obj".to_string()), "Context not captured for obj.bar");
     }
@@ -583,12 +557,10 @@ use crate::models::Language;
 "#;
         let (_, imports) = extract_calls_imports(&Language::Rust, code).unwrap();
         
-        // Verify imports are found
         assert!(find_import(&imports, "std::collections::HashMap").is_some(), "HashMap import not found");
         assert!(find_import(&imports, "std::io::Error as IoError").is_some(), "Aliased import not found");
         assert!(find_import(&imports, "crate::models::Language").is_some(), "Crate import not found");
         
-        // Verify line numbers
         let hashmap_import = find_import(&imports, "std::collections::HashMap").unwrap();
         assert_eq!(hashmap_import.line, 2, "Line number mismatch for HashMap import");
     }
@@ -604,10 +576,8 @@ function myFunc() {
 "#;
         let (calls, _) = extract_calls_imports(&Language::JavaScript, code).unwrap();
         
-        // Verify calls
         assert!(find_call(&calls, "foo").is_some(), "Simple call not found");
         
-        // Method calls should have context
         let bar_call = find_call(&calls, "bar").unwrap();
         assert_eq!(bar_call.context, Some("obj".to_string()), "Context not captured for obj.bar()");
         assert_eq!(bar_call.line, 4, "Line number mismatch");
@@ -625,16 +595,13 @@ import { Button as Btn } from './components';
 "#;
         let (_, imports) = extract_calls_imports(&Language::JavaScript, code).unwrap();
         
-        // Default import
         let react_import = find_import(&imports, "react").unwrap();
         assert_eq!(react_import.alias, Some("React".to_string()), "Default import alias not captured");
         assert_eq!(react_import.line, 2, "Line number mismatch");
         
-        // Named imports
         assert!(find_import(&imports, "react/useState").is_some(), "Named import useState not found");
         assert!(find_import(&imports, "react/useEffect").is_some(), "Named import useEffect not found");
         
-        // Aliased import
         let btn_import = find_import(&imports, "./components/Button").unwrap();
         assert_eq!(btn_import.alias, Some("Btn".to_string()), "Import alias not captured");
     }
@@ -664,7 +631,6 @@ import type { User } from './types';
         let (_, imports) = extract_calls_imports(&Language::TypeScript, code).unwrap();
         
         assert!(find_import(&imports, "@angular/core/Component").is_some(), "Angular import not found");
-        // Type imports are processed the same way as regular imports
         assert!(find_import(&imports, "./types/User").is_some(), "Type import not found");
     }
 
@@ -685,7 +651,6 @@ public class Example {
         assert!(find_call(&calls, "doMore").is_some(), "Object method call not found");
         assert!(find_call(&calls, "println").is_some(), "System.out.println not found");
         
-        // Verify line number
         let do_something = find_call(&calls, "doSomething").unwrap();
         assert_eq!(do_something.line, 4, "Line number mismatch");
     }
@@ -699,12 +664,10 @@ import static org.junit.Assert.assertEquals;
 "#;
         let (_, imports) = extract_calls_imports(&Language::Java, code).unwrap();
         
-        // Java imports should now work correctly
         assert!(find_import(&imports, "java.util.List").is_some(), "List import not found");
         assert!(find_import(&imports, "java.util.ArrayList").is_some(), "ArrayList import not found");
         assert!(find_import(&imports, "org.junit.Assert.assertEquals").is_some(), "Static import not found");
         
-        // Verify line numbers
         let list_import = find_import(&imports, "java.util.List").unwrap();
         assert_eq!(list_import.line, 2, "Line number mismatch");
     }
@@ -786,7 +749,6 @@ public class Example {
 "#;
         let (calls, _) = extract_calls_imports(&Language::CSharp, code).unwrap();
         
-        // C# call extraction currently returns no results
         assert_eq!(calls.len(), 0);
     }
 
@@ -799,9 +761,6 @@ using System.Linq;
 "#;
         let (_, imports) = extract_calls_imports(&Language::CSharp, code).unwrap();
         
-        // NOTE: C# import extraction currently has bugs and returns no results
-        // This test documents the current behavior - imports should be fixed in the future
-        // TODO: Fix C# import extraction in relations.rs
         assert_eq!(imports.len(), 0, "C# imports currently not working - this is a known bug");
     }
 
@@ -817,7 +776,6 @@ def my_func():
         
         assert!(find_call(&calls, "foo").is_some(), "Simple call not found");
         
-        // Method calls should have context
         let bar_call = find_call(&calls, "bar").unwrap();
         assert_eq!(bar_call.context, Some("obj".to_string()), "Context not captured");
         assert_eq!(bar_call.line, 4, "Line number mismatch");
@@ -836,21 +794,16 @@ from collections import OrderedDict as ODict
 "#;
         let (_, imports) = extract_calls_imports(&Language::Python, code).unwrap();
         
-        // Simple import
         assert!(find_import(&imports, "os").is_some(), "os import not found");
         
-        // Aliased import
         let sys_import = find_import(&imports, "sys").unwrap();
         assert_eq!(sys_import.alias, Some("system".to_string()), "sys alias not captured");
         
-        // From import
         assert!(find_import(&imports, "pathlib.Path").is_some(), "Path import not found");
         
-        // From import with alias
         let odict = find_import(&imports, "collections.OrderedDict").unwrap();
         assert_eq!(odict.alias, Some("ODict".to_string()), "OrderedDict alias not captured");
         
-        // Line numbers
         let os_import = find_import(&imports, "os").unwrap();
         assert_eq!(os_import.line, 2, "Line number mismatch");
     }
@@ -867,7 +820,6 @@ func main() {
 "#;
         let (calls, _) = extract_calls_imports(&Language::Go, code).unwrap();
         
-        // Go parser extracts just the method name from qualified calls
         assert!(find_call(&calls, "Println").is_some() || 
                 calls.iter().any(|c| c.name.contains("Println")), 
                 "Println call not found");

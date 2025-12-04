@@ -52,6 +52,7 @@ impl ModelProvider for OllamaProvider {
     }
 }
 
+#[derive(Clone)]
 pub struct OpenAIProvider {
     pub model: String,
     pub api_key: String,
@@ -171,5 +172,15 @@ impl OpenAIProvider {
 impl ModelProvider for OpenAIProvider {
     async fn chat(&self, messages: &[Message]) -> Result<String> {
         self.chat_inner(messages, None, None).await
+    }
+}
+
+#[async_trait]
+impl emry_core::traits::LLM for OpenAIProvider {
+    async fn complete(&self, prompt: &str) -> Result<String> {
+        self.chat(&[Message {
+            role: "user".to_string(),
+            content: prompt.to_string(),
+        }]).await
     }
 }

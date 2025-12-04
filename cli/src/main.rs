@@ -2,13 +2,12 @@ mod commands;
 
 use anyhow::Result;
 use clap::Parser;
-use commands::{Cli, Commands}; // Added GraphArgs
+use commands::{Cli, Commands};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
@@ -86,7 +85,62 @@ async fn main() -> Result<()> {
                 1
             }
         },
-
+        Commands::Cat { files } => match commands::handle_cat(files, cli.config.as_deref()).await {
+            Ok(_) => 0,
+            Err(e) => {
+                commands::ui::print_error(&format!("Cat failed: {}", e));
+                1
+            }
+        },
+        Commands::Explore { path, depth } => match commands::handle_explore(path, depth, cli.config.as_deref()).await {
+            Ok(_) => 0,
+            Err(e) => {
+                commands::ui::print_error(&format!("Explore failed: {}", e));
+                1
+            }
+        },
+        Commands::Architecture { mode, verbose } => match commands::handle_architecture(mode, verbose, cli.config.as_deref()).await {
+            Ok(_) => 0,
+            Err(e) => {
+                commands::ui::print_error(&format!("Architecture analysis failed: {}", e));
+                1
+            }
+        },
+        Commands::Impact { file, start, end, verbose } => match commands::handle_impact(file, start, end, verbose, cli.config.as_deref()).await {
+            Ok(_) => 0,
+            Err(e) => {
+                commands::ui::print_error(&format!("Impact analysis failed: {}", e));
+                1
+            }
+        },
+        Commands::Focus { topic, verbose } => match commands::handle_focus(topic, verbose, cli.config.as_deref()).await {
+            Ok(_) => 0,
+            Err(e) => {
+                commands::ui::print_error(&format!("Focus failed: {}", e));
+                1
+            }
+        },
+        Commands::Map { depth, verbose } => match commands::handle_codebase_map(depth, verbose, cli.config.as_deref()).await {
+            Ok(_) => 0,
+            Err(e) => {
+                commands::ui::print_error(&format!("Map generation failed: {}", e));
+                1
+            }
+        },
+        Commands::Debug => match commands::handle_debug(cli.config.as_deref()).await {
+            Ok(_) => 0,
+            Err(e) => {
+                commands::ui::print_error(&format!("Debug failed: {}", e));
+                1
+            }
+        },
+        Commands::Explain { verbose } => match commands::handle_explain(verbose, cli.config.as_deref()).await {
+            Ok(_) => 0,
+            Err(e) => {
+                commands::ui::print_error(&format!("Explain failed: {}", e));
+                1
+            }
+        },
     };
 
     std::process::exit(exit_code);

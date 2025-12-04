@@ -5,7 +5,6 @@ use emry_agent::project::types::GraphSubgraph;
 use emry_agent::ops::graph::{GraphTool, GraphDirection as ToolGraphDirection};
 use std::path::Path;
 use std::sync::Arc;
-use emry_store::SurrealStore;
 
 #[derive(Parser)]
 pub struct GraphArgs {
@@ -52,7 +51,7 @@ impl From<GraphDirection> for ToolGraphDirection {
     }
 }
 
-use emry_agent::project::embedder::get_embedding_dimension;
+
 
 pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result<()> {
     use super::ui;
@@ -61,17 +60,10 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
 
     let ctx = agent_context::RepoContext::from_env(config_path).await?;
     
-    // Initialize SurrealStore if not already in context
-    let ctx = if ctx.surreal_store.is_none() {
-        let surreal_path = ctx.index_dir.join("surreal.db");
-        let vector_dim = get_embedding_dimension(&ctx.config.embedding);
-        let surreal_store = Arc::new(SurrealStore::new(&surreal_path, vector_dim).await?);
-        let mut ctx = ctx;
-        ctx.surreal_store = Some(surreal_store);
-        Arc::new(ctx)
-    } else {
-        Arc::new(ctx)
-    };
+    if ctx.surreal_store.is_none() {
+        return Err(anyhow::anyhow!("SurrealStore not initialized. Run 'emry index' first."));
+    }
+    let ctx = Arc::new(ctx);
 
     let graph_tool = GraphTool::new(ctx.clone());
 
@@ -80,7 +72,6 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
 
     match result {
         Ok(graph_res) => {
-            // Handle disambiguation
             if let Some(candidates) = graph_res.candidates {
                 if args.json {
                     println!("{}", serde_json::json!({
@@ -108,7 +99,6 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
                     let selected = &candidates[idx];
                     println!("\nQuerying: {}\n", selected.id);
                     
-                    // Re-query with exact ID
                     let final_result = graph_tool.graph(
                         &selected.id, 
                         direction, 
@@ -116,20 +106,7 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
                         None
                     ).await?;
                     
-                    let mut subgraph = final_result.subgraph;
-                    if !args.kinds.is_empty() {
-                        subgraph.edges.retain(|e| args.kinds.contains(&e.kind));
-                    }
-                    
-                    if args.json {
-                        println!("{}", serde_json::to_string_pretty(&subgraph)?);
-                    } else {
-                        if subgraph.nodes.is_empty() {
-                            println!("No nodes found");
-                        } else {
-                            print_subgraph(&subgraph, &selected.label);
-                        }
-                    }
+                    process_and_output(final_result.subgraph, &selected.label, &args.kinds, args.json)?;
                     return Ok(());
                 } else {
                     println!("Selection cancelled");
@@ -137,28 +114,7 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
                 }
             }
             
-            // Normal flow - no disambiguation needed
-            let mut subgraph = graph_res.subgraph;
-
-            // Filter edges if kinds are provided
-            if !args.kinds.is_empty() {
-                subgraph.edges.retain(|e| args.kinds.contains(&e.kind));
-            }
-            
-            // Filter chunks if not showing chunks
-            if !args.show_chunks {
-
-            }
-
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&subgraph)?);
-            } else {
-                if subgraph.nodes.is_empty() {
-                    println!("No nodes found for '{}'", args.node);
-                } else {
-                    print_subgraph(&subgraph, &args.node);
-                }
-            }
+            process_and_output(graph_res.subgraph, &args.node, &args.kinds, args.json)?;
         }
         Err(e) => {
             if args.json {
@@ -169,6 +125,28 @@ pub async fn handle_graph(args: GraphArgs, config_path: Option<&Path>) -> Result
         }
     }
 
+    Ok(())
+}
+
+fn process_and_output(
+    mut subgraph: GraphSubgraph,
+    source_label: &str,
+    kinds: &[String],
+    json: bool,
+) -> Result<()> {
+    if !kinds.is_empty() {
+        subgraph.edges.retain(|e| kinds.contains(&e.kind));
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&subgraph)?);
+    } else {
+        if subgraph.nodes.is_empty() {
+            println!("No nodes found for '{}'", source_label);
+        } else {
+            print_subgraph(&subgraph, source_label);
+        }
+    }
     Ok(())
 }
 

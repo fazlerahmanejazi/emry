@@ -15,3 +15,5 @@ specs/
 target
 direction_to_explore.md
 *.md
+/research
+.env

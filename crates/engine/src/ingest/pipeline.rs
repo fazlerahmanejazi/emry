@@ -35,9 +35,9 @@ pub struct PreparedFile {
     pub content: String,
     pub chunks: Vec<emry_core::models::Chunk>,
     pub symbols: Vec<emry_core::models::Symbol>,
-    pub chunk_symbol_edges: Vec<(String, String)>, // chunk -> symbol
-    pub call_edges: Vec<(String, RelationRef)>,    // caller -> full call info
-    pub import_edges: Vec<(String, RelationRef)>,  // file or chunk -> full import info
+    pub chunk_symbol_edges: Vec<(String, String)>,
+    pub call_edges: Vec<(String, RelationRef)>,
+    pub import_edges: Vec<(String, RelationRef)>,
 }
 
 pub async fn analyze_source_files(
@@ -54,8 +54,7 @@ pub async fn analyze_source_files(
         let input_clone = input.clone();
         async move {
             let permit = sem.acquire().await.expect("semaphore closed");
-            // Note: We pass None for embedder here because we want to batch embed globally later
-            let res = tokio::task::spawn_blocking(move || prepare_file(&input_clone, &cfg, None))
+            let res = tokio::task::spawn_blocking(move || prepare_file(&input_clone, &cfg))
                 .await
                 .context("Task join error")
                 .and_then(|r| r.context(format!("Failed to prepare file {}", input.path.display())))
@@ -78,7 +77,6 @@ pub async fn generate_embeddings(
     prepared_files: &mut [PreparedFile],
     embedder: Arc<dyn Embedder + Send + Sync>,
 ) {
-    // Collect all chunks that need embedding
     let mut all_chunks_refs: Vec<&mut emry_core::models::Chunk> = Vec::new();
     for file in prepared_files.iter_mut() {
         for chunk in &mut file.chunks {
@@ -87,8 +85,6 @@ pub async fn generate_embeddings(
     }
 
     if !all_chunks_refs.is_empty() {
-        let _texts: Vec<String> = all_chunks_refs.iter().map(|c| c.content.clone()).collect();
-        // Embed in batches of 512 to avoid hitting API limits too hard
         for (i, chunk_batch) in all_chunks_refs.chunks_mut(512).enumerate() {
             let batch_texts: Vec<String> =
                 chunk_batch.iter().map(|c| c.content.clone()).collect();
@@ -121,7 +117,6 @@ pub fn compute_hash(content: &str) -> String {
 fn prepare_file(
     input: &FileInput,
     config: &Config,
-    _embedder: Option<Arc<dyn Embedder + Send + Sync>>,
 ) -> Result<PreparedFile> {
     let chunker = GenericChunker::with_config(input.language.clone(), config.chunking.clone());
     let mut chunks = chunker.chunk(&input.content, &input.path)?;
@@ -130,8 +125,6 @@ fn prepare_file(
             chunk.content_hash = compute_hash(&chunk.content);
         }
     }
-
-
 
     let mut symbols: Vec<emry_core::models::Symbol> = Vec::new();
     let mut chunk_symbol_edges: Vec<(String, String)> = Vec::new();
@@ -152,7 +145,7 @@ fn prepare_file(
             }
         }
         Err(e) => {
-            eprintln!("Failed to extract symbols for {}: {}", input.path.display(), e);
+            warn!("Failed to extract symbols for {}: {}", input.path.display(), e);
         }
     }
 
@@ -163,32 +156,11 @@ fn prepare_file(
     let mut import_edges: Vec<(String, RelationRef)> = Vec::new();
 
     for c in calls {
-        // Find the smallest symbol containing this call
-        let caller_node = symbols
-            .iter()
-            .filter(|s| c.line >= s.start_line && c.line <= s.end_line)
-            .min_by_key(|s| s.end_line - s.start_line)
-            .map(|s| s.id.clone())
-            .or_else(|| {
-                find_covering_chunk_id(&chunks, c.line, c.line)
-            })
-            .unwrap_or_else(|| input.file_node_id.clone());
-            
-
+        let caller_node = resolve_node_id(c.line, &symbols, &chunks, &input.file_node_id);
         call_edges.push((caller_node, c));
     }
     for imp in imports {
-        // Find the smallest symbol containing this import (usually top-level, but could be inside mod/fn)
-        let caller_node = symbols
-            .iter()
-            .filter(|s| imp.line >= s.start_line && imp.line <= s.end_line)
-            .min_by_key(|s| s.end_line - s.start_line)
-            .map(|s| s.id.clone())
-            .or_else(|| {
-                find_covering_chunk_id(&chunks, imp.line, imp.line)
-            })
-            .unwrap_or_else(|| input.file_node_id.clone());
-            
+        let caller_node = resolve_node_id(imp.line, &symbols, &chunks, &input.file_node_id);
         import_edges.push((caller_node, imp));
     }
 
@@ -219,6 +191,21 @@ fn find_covering_chunk_id(
         }
     }
     None
+}
+
+fn resolve_node_id(
+    line: usize,
+    symbols: &[emry_core::models::Symbol],
+    chunks: &[emry_core::models::Chunk],
+    file_node_id: &str,
+) -> String {
+    symbols
+        .iter()
+        .filter(|s| line >= s.start_line && line <= s.end_line)
+        .min_by_key(|s| s.end_line - s.start_line)
+        .map(|s| s.id.clone())
+        .or_else(|| find_covering_chunk_id(chunks, line, line))
+        .unwrap_or_else(|| file_node_id.to_string())
 }
 
 

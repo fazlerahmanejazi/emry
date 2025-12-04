@@ -32,7 +32,7 @@ llm:
 
 # Agent settings
 agent:
-  max_steps: 12
+  max_steps: 20
   max_per_step_observations: 5
   max_total_observations: 50
   max_tokens_per_observation: 800

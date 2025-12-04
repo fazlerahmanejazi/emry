@@ -1,5 +1,3 @@
-// File scanner for repository indexing
-// File scanner for repository indexing
 use crate::models::Language;
 use emry_config::CoreConfig;
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -36,6 +34,7 @@ pub fn scan_repo(root: &Path, config: &CoreConfig) -> Vec<ScannedFile> {
     let builder = WalkBuilder::new(root);
     let walker = builder.build();
 
+    println!("Scanning root: {}", root.display());
     for result in walker {
         match result {
             Ok(entry) => {

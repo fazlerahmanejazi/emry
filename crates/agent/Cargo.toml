@@ -17,6 +17,7 @@ async-trait = "0.1"
 futures = { workspace = true }
 globset = { workspace = true }
 ignore = "0.4"
+surrealdb = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

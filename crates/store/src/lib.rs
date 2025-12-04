@@ -18,7 +18,6 @@ impl SurrealStore {
         let db = Surreal::new::<RocksDb>(path).await?;
         db.use_ns("emry").use_db("main").await?;
         
-        // Initialize Schema
         Self::init_schema(&db, vector_dimension).await?;
         
         Ok(Self { db })
@@ -352,14 +351,12 @@ impl SurrealStore {
     /// - "chunk:uuid" -> None (chunks don't have predictable file info in ID)
     fn extract_file_from_id(id: &str) -> Option<String> {
         if let Some(rest) = id.strip_prefix("symbol:") {
-            // Handle angle bracket format: ⟨filepath::name⟩
             let content = if rest.starts_with('⟨') && rest.ends_with('⟩') {
-                &rest[3..rest.len()-3] // Remove ⟨ and ⟩ (3 bytes each in UTF-8)
+                &rest[3..rest.len()-3] 
             } else {
                 rest
             };
             
-            // Format: "file_path::symbol_name"
             if let Some(idx) = content.rfind("::") {
                 return Some(content[..idx].to_string());
             }
@@ -584,7 +581,6 @@ impl SurrealStore {
     pub async fn delete_file(&self, path: &str) -> Result<()> {
         let file_thing = surrealdb::sql::Thing::from(("file", path));
         
-        // Delete File
         let _: Option<FileRecord> = self.db.delete(("file", path)).await?;
         
         // Delete Chunks
@@ -741,4 +737,256 @@ impl SurrealStore {
         }
         Ok(0)
     }
+    pub async fn find_references(&self, symbol_id: &str) -> Result<Vec<SurrealGraphNode>> {
+        // Find all nodes that call this symbol
+        // The 'calls' table has 'in' (caller) and 'out' (callee)
+        let thing = surrealdb::sql::thing(symbol_id)?;
+        
+        // Select the 'in' node (caller) where 'out' is the target symbol
+        // We can use a graph traversal or a direct select on the edge table
+        // Using graph traversal: SELECT <-calls<-symbol FROM $id doesn't work directly if we want the node details
+        // Better: SELECT in.* FROM calls WHERE out = $id
+        
+        let mut res = self.db.query("SELECT in.id as id, in.name as label, in.kind as kind, in.file.path as file_path FROM calls WHERE out = $id")
+            .bind(("id", thing))
+            .await?;
+            
+        let references: Vec<SurrealGraphNode> = res.take(0)?;
+        Ok(references)
+    }
+
+    pub async fn find_definition(&self, symbol_name: &str) -> Result<Vec<SurrealGraphNode>> {
+        // Find symbols with this name
+        // This is similar to find_nodes_by_label but exact match
+        let mut res = self.db.query("SELECT id, name as label, kind, file.path as file_path FROM symbol WHERE name = $name")
+            .bind(("name", symbol_name.to_string()))
+            .await?;
+            
+        let definitions: Vec<SurrealGraphNode> = res.take(0)?;
+        Ok(definitions)
+    }
+
+    pub async fn search_with_rerank(&self, embedding: Vec<f32>, limit: usize) -> Result<Vec<ChunkRecord>> {
+        // 1. Initial Retrieval (fetch more than needed)
+        let initial_limit = limit * 3;
+        
+        let mut res = self.db.query("SELECT *, vector::similarity::cosine(embedding, $query_vec) as score FROM chunk WHERE embedding <|10, cosine|> $query_vec LIMIT $limit")
+            .bind(("query_vec", embedding))
+            .bind(("limit", initial_limit))
+            .await?;
+            
+        let results: Vec<ScoredResult> = res.take(0)?;
+
+        // 2. Rerank based on Graph Centrality
+        let mut reranked = Vec::new();
+        
+        for result in results {
+            let chunk_id = result.id.clone().unwrap();
+            
+            // Find the symbol containing this chunk
+            let mut res = self.db.query("SELECT <-contains<-symbol.id as symbol_id FROM $chunk_id")
+                .bind(("chunk_id", chunk_id))
+                .await?;
+            
+            let symbol_ids_res: Vec<SymbolIdWrapper> = res.take(0)?;
+            
+            let mut centrality = 0.0;
+            if let Some(s) = symbol_ids_res.first() {
+                if let Some(sym_id) = s.symbol_id.first() {
+                     let sym_id_clone = sym_id.clone();
+                     // Count incoming calls to this symbol
+                     let mut res = self.db.query("SELECT count(<-calls) as count FROM $sym_id")
+                        .bind(("sym_id", sym_id_clone))
+                        .await?;
+                     
+                     let count_res: Vec<CountWrapper> = res.take(0)?;
+                     if let Some(c) = count_res.first() {
+                         centrality = c.count as f32;
+                     }
+                }
+            }
+            
+            // Combined Score: Vector Score * (1 + log(1 + centrality) * 0.1)
+            let boost = 1.0 + (1.0 + centrality).ln() * 0.1;
+            let final_score = result.score * boost;
+
+            tracing::debug!(
+                "Rerank: {} (score={:.4}, centrality={:.1}, boost={:.4}, final={:.4})",
+                result.id.as_ref().map(|t| t.to_string()).unwrap_or_default(),
+                result.score,
+                centrality,
+                boost,
+                final_score
+            );
+            
+            reranked.push((result.into_chunk_record(), final_score));
+        }
+        
+        // Sort by final score descending
+        reranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        
+        Ok(reranked.into_iter().map(|(c, _)| c).take(limit).collect())
+    }
+
+    pub async fn get_type_definition(&self, symbol_name: &str) -> Result<Option<SurrealGraphNode>> {
+        // 1. Find definition of the symbol
+        let definitions = self.find_definition(symbol_name).await?;
+        
+        if let Some(def) = definitions.first() {
+            // Heuristic: If definition is a type, return it.
+            if def.kind == "class" || def.kind == "struct" || def.kind == "enum" || def.kind == "interface" {
+                return Ok(Some(def.clone()));
+            }
+            
+            // Heuristic: Try to guess type name from variable name (snake_case -> PascalCase)
+            let type_name_guess = self.guess_type_name(&def.label);
+            if let Some(guess) = type_name_guess {
+                 let type_defs = self.find_definition(&guess).await?;
+                 if let Some(type_def) = type_defs.first() {
+                     return Ok(Some(type_def.clone()));
+                 }
+            }
+            
+            // Fallback: return the definition itself
+            return Ok(Some(def.clone()));
+        }
+        
+        Ok(None)
+    }
+    
+    fn guess_type_name(&self, var_name: &str) -> Option<String> {
+        let mut out = String::new();
+        let mut next_upper = true;
+        for c in var_name.chars() {
+            if c == '_' {
+                next_upper = true;
+            } else {
+                if next_upper {
+                    out.push(c.to_ascii_uppercase());
+                    next_upper = false;
+                } else {
+                    out.push(c);
+                }
+            }
+        }
+        if out.is_empty() { None } else { Some(out) }
+    }
+
+    pub async fn get_module_coupling(&self) -> Result<Vec<ModuleCoupling>> {
+        // Query to find imports between files, then aggregate by module.
+        // We assume "module" is the directory containing the file.
+        // SurrealDB query:
+        // SELECT source_file.path as source, target_file.path as target FROM (SELECT <-imports.in as source_file, <-imports.out as target_file FROM symbol)
+        
+        // Simplified approach: Get all import edges and process in Rust for flexibility
+        // 1. Get all 'imports' edges
+        let mut res = self.db.query("SELECT in.file.path as source, out.file.path as target FROM imports").await?;
+        
+        #[derive(serde::Deserialize)]
+        struct ImportEdge {
+            source: Option<String>,
+            target: Option<String>,
+        }
+        
+        let edges: Vec<ImportEdge> = res.take(0)?;
+        
+        let mut coupling = std::collections::HashMap::new();
+        
+        for edge in edges {
+            if let (Some(source), Some(target)) = (edge.source, edge.target) {
+                let source_mod = self.get_module_from_path(&source);
+                let target_mod = self.get_module_from_path(&target);
+                
+                if source_mod != target_mod && !source_mod.is_empty() && !target_mod.is_empty() {
+                    let key = (source_mod, target_mod);
+                    *coupling.entry(key).or_insert(0) += 1;
+                }
+            }
+        }
+        
+        let mut result = Vec::new();
+        for ((source, target), count) in coupling {
+            result.push(ModuleCoupling {
+                source_module: source,
+                target_module: target,
+                strength: count,
+            });
+        }
+        
+        // Sort by strength descending
+        result.sort_by(|a, b| b.strength.cmp(&a.strength));
+        
+        Ok(result)
+    }
+    
+    fn get_module_from_path(&self, path: &str) -> String {
+        let path = std::path::Path::new(path);
+        if let Some(parent) = path.parent() {
+            parent.to_string_lossy().to_string()
+        } else {
+            "root".to_string()
+        }
+    }
+
+    pub async fn get_central_nodes(&self, limit: usize) -> Result<Vec<CentralNode>> {
+        // Find nodes with high in-degree (incoming calls)
+        let mut res = self.db.query("SELECT id, name as label, kind, file.path as file_path, count(<-calls) as in_degree FROM symbol WHERE file != NONE ORDER BY in_degree DESC LIMIT $limit")
+            .bind(("limit", limit))
+            .await?;
+            
+        let nodes: Vec<CentralNode> = res.take(0)?;
+        Ok(nodes)
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ModuleCoupling {
+    pub source_module: String,
+    pub target_module: String,
+    pub strength: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CentralNode {
+    pub id: Thing,
+    pub label: String,
+    pub kind: String,
+    pub file_path: String,
+    pub in_degree: usize,
+}
+
+#[derive(serde::Deserialize)]
+struct ScoredResult {
+    id: Option<Thing>,
+    content: String,
+    embedding: Option<Vec<f32>>,
+    file: Thing,
+    start_line: usize,
+    end_line: usize,
+    scopes: Vec<String>,
+    score: f32,
+}
+
+impl ScoredResult {
+    fn into_chunk_record(self) -> ChunkRecord {
+        ChunkRecord {
+            id: self.id,
+            content: self.content,
+            embedding: self.embedding,
+            file: self.file,
+            start_line: self.start_line,
+            end_line: self.end_line,
+            scopes: self.scopes,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SymbolIdWrapper {
+    symbol_id: Vec<Thing>,
+}
+
+#[derive(serde::Deserialize)]
+struct CountWrapper {
+    count: usize,
 }

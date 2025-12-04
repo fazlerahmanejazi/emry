@@ -65,7 +65,6 @@ impl Tool for InspectGraphTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'node' argument"))?;
         let file_filter = args["file_filter"].as_str();
-        let _kind = args["kind"].as_str(); // Ignored for now, handled by GraphTool heuristics
         let relation = args["relation"].as_str().unwrap_or("outgoing");
         let max_hops = args["max_hops"].as_u64().unwrap_or(1) as usize;
 
@@ -77,7 +76,6 @@ impl Tool for InspectGraphTool {
 
         match self.inner.graph(node_query, direction, max_hops, file_filter).await {
             Ok(result) => {
-                // Check for disambiguation
                 if let Some(candidates) = result.candidates {
                     let mut response = format!(
                         "Found {} symbols matching '{}':\n\n", 
@@ -103,7 +101,6 @@ impl Tool for InspectGraphTool {
                     return Ok(response);
                 }
                 
-                // Success - return graph
                 let json_output = serde_json::to_string_pretty(&result.subgraph)?;
                 Ok(json_output)
             }
@@ -114,6 +111,164 @@ impl Tool for InspectGraphTool {
                     Err(e)
                 }
             }
+        }
+    }
+}
+
+pub struct FindReferencesTool {
+    inner: Arc<InnerGraphTool>,
+}
+
+impl FindReferencesTool {
+    pub fn new(inner: Arc<InnerGraphTool>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait]
+impl Tool for FindReferencesTool {
+    fn name(&self) -> &str {
+        "find_references"
+    }
+
+    fn description(&self) -> &str {
+        "Find all places where a specific symbol is called or used. You must provide the Symbol ID (e.g., from 'view_file_outline' or 'inspect_graph')."
+    }
+
+    fn schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "symbol_id": {
+                    "type": "string",
+                    "description": "The ID of the symbol to find references for."
+                }
+            },
+            "required": ["symbol_id"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> Result<String> {
+        let symbol_id = args["symbol_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'symbol_id' argument"))?;
+            
+        let refs = self.inner.find_references(symbol_id).await?;
+        
+        if refs.is_empty() {
+            return Ok(format!("No references found for symbol '{}'.", symbol_id));
+        }
+        
+        let mut out = String::new();
+        out.push_str(&format!("Found {} references for '{}':\n\n", refs.len(), symbol_id));
+        
+        for (i, r) in refs.iter().enumerate() {
+            out.push_str(&format!("{}. {} ({}) in {}\n   ID: {}\n", i+1, r.label, r.kind, r.file_path, r.id));
+        }
+        
+        Ok(out)
+    }
+}
+
+pub struct GoToDefinitionTool {
+    inner: Arc<InnerGraphTool>,
+}
+
+impl GoToDefinitionTool {
+    pub fn new(inner: Arc<InnerGraphTool>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait]
+impl Tool for GoToDefinitionTool {
+    fn name(&self) -> &str {
+        "go_to_definition"
+    }
+
+    fn description(&self) -> &str {
+        "Find the definition of a symbol by its name. Returns the file path and line number."
+    }
+
+    fn schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "symbol_name": {
+                    "type": "string",
+                    "description": "The name of the symbol to find definition for (e.g. 'MyClass', 'my_function')."
+                }
+            },
+            "required": ["symbol_name"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> Result<String> {
+        let symbol_name = args["symbol_name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'symbol_name' argument"))?;
+            
+        let defs = self.inner.find_definition(symbol_name).await?;
+        
+        if defs.is_empty() {
+            return Ok(format!("No definition found for symbol '{}'.", symbol_name));
+        }
+        
+        let mut out = String::new();
+        out.push_str(&format!("Found {} definitions for '{}':\n\n", defs.len(), symbol_name));
+        
+        for (i, d) in defs.iter().enumerate() {
+            out.push_str(&format!("{}. {} ({}) in {}\n   ID: {}\n", i+1, d.label, d.kind, d.file_path, d.id));
+        }
+        
+        Ok(out)
+    }
+}
+
+pub struct GetTypeDefinitionTool {
+    inner: Arc<InnerGraphTool>,
+}
+
+impl GetTypeDefinitionTool {
+    pub fn new(inner: Arc<InnerGraphTool>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait]
+impl Tool for GetTypeDefinitionTool {
+    fn name(&self) -> &str {
+        "get_type_definition"
+    }
+
+    fn description(&self) -> &str {
+        "Get the type definition of a variable or symbol. Useful for understanding what type a variable is."
+    }
+
+    fn schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "symbol_name": {
+                    "type": "string",
+                    "description": "The name of the variable or symbol to find the type for."
+                }
+            },
+            "required": ["symbol_name"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> Result<String> {
+        let symbol_name = args["symbol_name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'symbol_name' argument"))?;
+            
+        let def = self.inner.get_type_definition(symbol_name).await?;
+        
+        if let Some(d) = def {
+            Ok(format!("Type definition for '{}':\n\n{} ({}) in {}\nID: {}", symbol_name, d.label, d.kind, d.file_path, d.id))
+        } else {
+            Ok(format!("No type definition found for symbol '{}'.", symbol_name))
         }
     }
 }

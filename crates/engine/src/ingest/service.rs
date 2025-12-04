@@ -200,11 +200,9 @@ impl IngestionService {
         let file_id_str = file.path.to_string_lossy().to_string();
         let _file_id = Thing::from(("file", file_id_str.as_str()));
         
-        // Use cached maps
         let id_map = &ctx.id_map;
         let chunk_to_symbol = &ctx.chunk_to_symbol;
 
-        // Translate edges
         let translated_edges: Vec<(String, RelationRef)> = file.call_edges.iter().filter_map(|(caller, relation)| {
             if let Some(symbol_id) = chunk_to_symbol.get(caller) {
                 return Some((symbol_id.clone(), relation.clone()));
@@ -217,9 +215,7 @@ impl IngestionService {
             }
         }).collect();
 
-        // Translate import edges
         let translated_import_edges: Vec<(String, RelationRef)> = file.import_edges.iter().filter_map(|(importer, relation)| {
-             // Importer is usually a symbol, chunk, or file node ID from the pipeline
              
              if let Some(symbol_id) = chunk_to_symbol.get(importer) {
                  return Some((symbol_id.clone(), relation.clone()));

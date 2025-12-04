@@ -53,13 +53,10 @@ impl Search {
             }
         }).collect();
 
-        let mut symbols = Vec::new();
-        // Additionally search for exact symbol matches
-        // 2. Graph Search (Lexical match on symbols)
+        let mut symbols: Vec<SymbolHit> = Vec::new();
         let graph = self.service.store();
         if let Ok(nodes) = graph.find_nodes_by_label(query, None).await {
             for node in nodes {
-                // Filter for actual symbols (not files or other graph nodes that just contain the query)
                 if node.kind != "symbol" {
                     continue;
                 }
@@ -70,7 +67,6 @@ impl Search {
                     .map(Language::from_extension)
                     .unwrap_or(Language::Unknown);
 
-                // Try to get line numbers from the graph node itself
                 let start_line = 0;
                 let end_line = 0;
 
@@ -100,56 +96,7 @@ impl Search {
     }
 
     pub async fn search_with_context(&self, query: &str, limit: usize, _smart: bool) -> Result<emry_core::models::ContextGraph> {
-        // Use smart search if requested, but currently we rely on service defaults or CLI handling.
         self.service.search_with_context(query, limit, None).await
     }
 
-    /// Heuristic entry points: symbols named main/run/serve.
-    pub async fn list_entry_points(&self) -> Result<Vec<SymbolHit>> {
-        let mut out = Vec::new();
-        let keywords = ["main", "run", "serve"];
-        let graph = self.service.store();
-        if let Ok(nodes) = graph.list_all_symbols().await {
-            for node in nodes {
-                if !keywords.iter().any(|k| node.label.contains(k)) {
-                    continue;
-                }
-                let file_path = PathBuf::from(&node.file_path);
-                let language = file_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(Language::from_extension)
-                    .unwrap_or(Language::Unknown);
-                let kind = if node.kind.is_empty() {
-                    "symbol".to_string()
-                } else {
-                    node.kind.clone()
-                };
-
-                let start_line = 0;
-                let end_line = 0;
-
-                out.push(SymbolHit {
-                    name: node.label.clone(),
-                    file_path: node.file_path.clone(),
-                    language: language.clone(),
-                    start_line,
-                    end_line,
-                    symbol: emry_core::models::Symbol {
-                        id: node.id.to_string(),
-                        name: node.label.clone(),
-                        kind,
-                        file_path: file_path.clone(),
-                        start_line,
-                        end_line,
-                        fqn: node.label.clone(),
-                        language: language.clone(),
-                        doc_comment: None,
-                        parent_scope: None,
-                    },
-                });
-            }
-        }
-        Ok(out)
-    }
 }

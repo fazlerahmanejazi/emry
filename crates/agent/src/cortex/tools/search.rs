@@ -49,7 +49,6 @@ impl Tool for SearchCodeTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'query' argument"))?;
         let limit = args["limit"].as_u64().unwrap_or(10) as usize;
 
-        // Use smart search by default for the agent
         let context_graph = self.inner.search_with_context(query, limit, true).await?;
         
         if context_graph.anchors.is_empty() {
@@ -58,10 +57,8 @@ impl Tool for SearchCodeTool {
 
         let mut out = String::new();
         
-        // Use shared grouping logic
         let grouped = context_graph.group_by_symbol();
 
-        // Output Symbol Groups
         for group in grouped.groups {
             let content = emry_core::models::ScoredChunk::concatenate_chunks(&group.anchors);
             let start_line = group.anchors.iter().map(|c| c.chunk.start_line).min().unwrap_or(0);
@@ -84,7 +81,6 @@ impl Tool for SearchCodeTool {
             out.push_str("\n");
         }
 
-        // Output Unassigned Anchors
         if !grouped.unassigned.is_empty() {
             out.push_str("Other Matches:\n");
             for anchor in grouped.unassigned {

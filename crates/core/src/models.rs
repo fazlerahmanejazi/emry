@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Language {
     Python,
     JavaScript,
@@ -51,6 +51,13 @@ impl Language {
             _ => Language::Unknown,
         }
     }
+
+    pub fn from_path(path: &std::path::Path) -> Self {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(Self::from_extension)
+            .unwrap_or(Self::Unknown)
+    }
 }
 
 impl std::fmt::Display for Language {
@@ -81,11 +88,11 @@ pub struct Chunk {
 pub struct Symbol {
     pub id: String,
     pub name: String,
-    pub kind: String, // e.g., "function", "class"
+    pub kind: String,
     pub file_path: PathBuf,
     pub start_line: usize,
     pub end_line: usize,
-    pub fqn: String, // Fully Qualified Name
+    pub fqn: String,
     pub language: Language,
     pub doc_comment: Option<String>,
     pub parent_scope: Option<String>,
@@ -125,9 +132,9 @@ pub mod paths {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextGraph {
     pub anchors: Vec<ScoredChunk>,
-    pub related_files: Vec<File>,        // Parent files
-    pub related_symbols: Vec<Symbol>,    // Callers/Callees
-    pub edges: Vec<(String, String, String)>, // (from, to, relation)
+    pub related_files: Vec<File>,
+    pub related_symbols: Vec<Symbol>,
+    pub edges: Vec<(String, String, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,7 +172,6 @@ impl ContextGraph {
         let mut unassigned: Vec<ScoredChunk> = Vec::new();
 
         for anchor in &self.anchors {
-            // Find container symbol
             let container = self.edges.iter()
                 .find(|(_, to, rel)| to == &anchor.chunk.id && rel == "contains")
                 .and_then(|(from, _, _)| self.related_symbols.iter().find(|s| &s.id == from));
@@ -180,14 +186,12 @@ impl ContextGraph {
         let mut groups = Vec::new();
         for (sym_id, anchors) in symbol_groups {
             if let Some(sym) = self.related_symbols.iter().find(|s| s.id == sym_id) {
-                // Find calls
                 let calls: Vec<Symbol> = self.edges.iter()
                     .filter(|(from, _, rel)| from == &sym.id && rel == "calls")
                     .filter_map(|(_, to, _)| self.related_symbols.iter().find(|s| &s.id == to))
                     .cloned()
                     .collect();
                 
-                // Deduplicate calls
                 let mut unique_calls = calls;
                 unique_calls.sort_by(|a, b| a.name.cmp(&b.name));
                 unique_calls.dedup_by(|a, b| a.name == b.name);
@@ -221,7 +225,6 @@ impl ScoredChunk {
                 if gap > 1 {
                     out.push_str(&format!("\n// ... (gap of {} lines) ...\n", gap));
                 } else {
-                    // Ensure newline between chunks if not present
                     if !out.ends_with('\n') {
                         out.push('\n');
                     }
